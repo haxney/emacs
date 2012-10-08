@@ -295,27 +295,22 @@ contrast, `package-user-dir' contains packages for personal use."
 
 Slots:
 
-`:name'
-Name of the package, as a symbol.
+`name' Name of the package, as a symbol.
 
-`:version'
-Version of the package, as a version list.
+`version' Version of the package, as a version list.
 
-`:summary'
-Short description of the package, typically taken from the first
-line of the file.
+`summary' Short description of the package, typically taken from
+the first line of the file.
 
-`:reqs'
-Requirements of the package. A list of (PACKAGE VERSION-LIST)
-naming the dependent package and the minimum required version.
+`reqs' Requirements of the package. A list of (PACKAGE
+VERSION-LIST) naming the dependent package and the minimum
+required version.
 
-`:kind'
-The distribution format of the package. Currently, it is either
-`single' or `tar'.
+`kind' The distribution format of the package. Currently, it is
+either `single' or `tar'.
 
-`:archive'
-The name of the archive (as a string) whence this package came."
-
+`archive' The name of the archive (as a string) whence this
+package came."
               name
               version
               (summary "No description available.")
