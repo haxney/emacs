@@ -284,7 +284,7 @@ contrast, `package-user-dir' contains packages for personal use."
 
 		(name-string version-string &optional summary requirements
 			     &key kind archive
-			     &aux (name (intern name-string))
+			     &aux (name (intern-soft name-string))
 			     (version (ignore-errors (version-to-list version-string)))
 			     (reqs (mapcar
 				    (lambda (elt)
@@ -388,13 +388,12 @@ E.g., if given \"quux-23.0\", will return \"quux\""
   (if (string-match (concat "\\`" package-subdirectory-regexp "\\'") dirname)
       (match-string 1 dirname)))
 
-(defun package-load-descriptor (dir package)
-  "Load the description file in directory DIR for package PACKAGE.
-Here, PACKAGE is a string of the form NAME-VERSION, where NAME is
-the package name and VERSION is its version."
-  (let* ((pkg-dir (expand-file-name package dir))
+(defun package-load-descriptor (name version dir)
+  "Load the description file in directory DIR for package NAME.
+NAME and VERSION must be strings."
+  (let* ((pkg-dir (expand-file-name (format "%s-%s" name version) dir))
 	 (pkg-file (expand-file-name
-		    (format "%s-pkg" (package-strip-version package))
+		    (format "%s-pkg" name)
 		    pkg-dir)))
     (when (and (file-directory-p pkg-dir)
 	       (file-exists-p (format "%s.el" pkg-file)))
@@ -423,7 +422,7 @@ updates `package-alist' and `package-obsolete-alist'."
 NAME and VERSION are the package's name and version strings.
 This function checks `package-load-list', before actually loading
 the package by calling `package-load-descriptor'."
-  (let ((force (assq (intern name) package-load-list))
+  (let ((force (assq (intern-soft name) package-load-list))
 	(subdir (format "%s-%s" name version)))
     (and (file-directory-p (expand-file-name subdir dir))
 	 ;; Check `package-load-list':
@@ -439,7 +438,7 @@ the package by calling `package-load-descriptor'."
 	       (t
 		(error "Invalid element in `package-load-list'")))
 	 ;; Actually load the descriptor:
-	 (package-load-descriptor dir subdir))))
+	 (package-load-descriptor name version dir))))
 
 (defun package--dir (name version)
   "Return the directory where a package is installed, or nil if none.
@@ -490,12 +489,12 @@ specifying the minimum acceptable version."
 ;; if an older one was already activated.  This is not ideal; we'd at
 ;; least need to check to see if the package has actually been loaded,
 ;; and not merely activated.
-(defun package-activate (package min-version)
-  "Activate package PACKAGE, of version MIN-VERSION or newer.
+(defun package-activate (name min-version)
+  "Activate package NAME, of version MIN-VERSION or newer.
 MIN-VERSION should be a version list.
-If PACKAGE has any dependencies, recursively activate them.
+If NAME has any dependencies, recursively activate them.
 Return nil if the package could not be activated."
-  (let ((pkg-desc (cdr (assq package package-alist)))
+  (let ((pkg-desc (cdr (assq name package-alist)))
 	available-version found)
     ;; Check if PACKAGE is available in `package-alist'.
     (when pkg-desc
@@ -504,9 +503,9 @@ Return nil if the package could not be activated."
     (cond
      ;; If no such package is found, maybe it's built-in.
      ((null found)
-      (package-built-in-p package min-version))
+      (package-built-in-p name min-version))
      ;; If the package is already activated, just return t.
-     ((memq package package-activated-list)
+     ((memq name package-activated-list)
       t)
      ;; Otherwise, proceed with activation.
      (t
@@ -518,7 +517,7 @@ Return nil if the package could not be activated."
 	(if fail
 	    (warn "Unable to activate package `%s'.
 Required package `%s-%s' is unavailable"
-		  package (car fail) (package-version-join (cadr fail)))
+		  name (car fail) (package-version-join (cadr fail)))
 	  ;; If all goes well, activate the package itself.
 	  (package-activate-1 pkg-desc)))))))
 
@@ -619,50 +618,46 @@ untar into a directory named DIR; otherwise, signal an error."
 	(error "Package does not untar cleanly into directory %s/" dir))))
   (tar-untar-buffer))
 
-(defun package-unpack (file-name version)
+(defun package-unpack (name version)
   "Unpack a tar package.
-FILE-NAME and VERSION must be strings. FILE-NAME is the package
-name without a file extension or version numbers."
-  (let* ((dirname (format "%s-%s" file-name version))
+VERSION must be a string. NAME is the package name as a symbol."
+  (let* ((dirname (format "%s-%s" name version))
 	 (pkg-dir (expand-file-name dirname package-user-dir)))
     (make-directory package-user-dir t)
     ;; FIXME: should we delete PKG-DIR if it exists?
     (let* ((default-directory (file-name-as-directory package-user-dir)))
       (package-untar-buffer dirname)
-      (package--make-autoloads-and-compile file-name pkg-dir))))
+      (package--make-autoloads-and-compile name pkg-dir))))
 
-(defun package--make-autoloads-and-compile (file-name pkg-dir)
-  "Generate autoloads and do byte-compilation for package named FILE-NAME.
-FILE-NAME and PKG-DIR must be strings. FILE-NAME is the name of
-the file to compile, without any directory parts and PKG-DIR is
-the name of the package directory."
-  (package-generate-autoloads file-name pkg-dir)
+(defun package--make-autoloads-and-compile (name pkg-dir)
+  "Generate autoloads and do byte-compilation for package named NAME.
+PKG-DIR must be a string. NAME is the name of the file to compile
+as a symbol and PKG-DIR is the name of the package directory."
+  (package-generate-autoloads name pkg-dir)
   (let ((load-path (cons pkg-dir load-path)))
     ;; We must load the autoloads file before byte compiling, in
     ;; case there are magic cookies to set up non-trivial paths.
-    (load (expand-file-name (format "%s-autoloads" file-name) pkg-dir) nil t)
+    (load (expand-file-name (format "%s-autoloads" name) pkg-dir) nil t)
     (byte-recompile-directory pkg-dir 0 t)))
 
 (defun package--write-file-no-coding (file-name)
   (let ((buffer-file-coding-system 'no-conversion))
     (write-region (point-min) (point-max) file-name)))
 
-(defun package-unpack-single (file-name version desc requires)
+(defun package-unpack-single (name version desc requires)
   "Install the contents of the current buffer as a package.
-
-FILE-NAME, VERSION, and DESC must be strings. FILE-NAME is the
-base name of the package, without a file extension or version
-numbers."
+NAME is the name of the package as a symbol VERSION and DESC must
+be strings."
   ;; Special case "package".
-  (if (string= file-name "package")
+  (if (eq name 'package)
       (package--write-file-no-coding
-       (expand-file-name (format "%s.el" file-name) package-user-dir))
-    (let* ((pkg-dir (expand-file-name (format  "%s-%s" file-name
+       (expand-file-name (format "%s.el" name) package-user-dir))
+    (let* ((pkg-dir (expand-file-name (format  "%s-%s" name
 					       (package-version-join
 						(version-to-list version)))
 				      package-user-dir))
-	   (el-file  (expand-file-name (format "%s.el" file-name) pkg-dir))
-	   (pkg-file (expand-file-name (format "%s-pkg.el" file-name) pkg-dir)))
+	   (el-file  (expand-file-name (format "%s.el" name) pkg-dir))
+	   (pkg-file (expand-file-name (format "%s-pkg.el" name) pkg-dir)))
       (make-directory pkg-dir t)
       (package--write-file-no-coding el-file)
       (let ((print-level nil)
@@ -671,7 +666,7 @@ numbers."
 	 (concat
 	  (prin1-to-string
 	   (list 'define-package
-		 file-name
+		 name
 		 version
 		 desc
 		 (list 'quote
@@ -685,7 +680,7 @@ numbers."
 	 nil
 	 pkg-file
 	 nil nil nil 'excl))
-      (package--make-autoloads-and-compile file-name pkg-dir))))
+      (package--make-autoloads-and-compile name pkg-dir))))
 
 (defmacro package--with-work-buffer (location file &rest body)
   "Run BODY in a buffer containing the contents of FILE at LOCATION.
@@ -733,14 +728,14 @@ It will move point to somewhere in the headers."
 (defun package-download-single (name version desc requires)
   "Download and install a single-file package."
   (let ((location (package-archive-base name))
-	(file (format "%s-%s.el" (symbol-name name) version)))
+	(file (format "%s-%s.el" name version)))
     (package--with-work-buffer location file
       (package-unpack-single (symbol-name name) version desc requires))))
 
 (defun package-download-tar (name version)
   "Download and install a tar package."
   (let ((location (package-archive-base name))
-	(file (format "%s-%s.tar" (symbol-name name) version)))
+	(file (format "%s-%s.tar" name version)))
     (package--with-work-buffer location file
       (package-unpack (symbol-name name) version))))
 
@@ -1029,7 +1024,7 @@ When called from Lisp, PKG-DESC is a `package-desc' structure."
   (interactive (list (package-buffer-info)))
   (save-excursion
     (save-restriction
-      (let* ((file-name (symbol-name (package-desc-name pkg-desc)))
+      (let* ((name (package-desc-name pkg-desc))
 	     (requires (package-desc-reqs pkg-desc))
 	     (pkg-version (package-desc-version pkg-desc))
 	     (kind (package-desc-kind pkg-desc)))
@@ -1039,15 +1034,14 @@ When called from Lisp, PKG-DESC is a `package-desc' structure."
 	;; Install the package itself.
 	(cond
 	 ((eq kind 'single)
-	  (package-unpack-single file-name
+	  (package-unpack-single name
 				 (package-version-join pkg-version)
 				 (package-desc-summary pkg-desc)
 				 requires))
 	 ((eq kind 'tar)
-	  (package-unpack file-name
-			  (package-version-join pkg-version)))
+	  (package-unpack name (package-version-join pkg-version)))
 	 (t
-	  (error "Unknown package type: %s" (symbol-name kind))))
+	  (error "Unknown package type: %s" kind)))
 	;; Try to activate it.
 	(package-initialize)))))
 
@@ -1078,8 +1072,9 @@ The file can either be a tar file or an Emacs Lisp file."
 	     name version))))
 
 (defun package-archive-base (name)
-  "Return the archive containing the package NAME."
-  (let ((desc (cdr (assq (intern-soft name) package-archive-contents))))
+  "Return the archive containing the package NAME.
+NAME must be a symbol."
+  (let ((desc (cdr (assq name package-archive-contents))))
     (cdr (assoc (package-desc-archive desc) package-archives))))
 
 (defun package--download-one-archive (archive file)
@@ -1235,7 +1230,7 @@ If optional arg NO-ACTIVATE is non-nil, don't activate packages."
 	(dolist (req reqs)
 	  (setq name (car req)
 		vers (cadr req)
-		text (format "%s-%s" (symbol-name name)
+		text (format "%s-%s" name
 			     (package-version-join vers)))
 	  (cond (first (setq first nil))
 		((>= (+ 2 (current-column) (length text))
