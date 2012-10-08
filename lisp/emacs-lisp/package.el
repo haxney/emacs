@@ -394,10 +394,10 @@ Here, PACKAGE is a string of the form NAME-VERSION, where NAME is
 the package name and VERSION is its version."
   (let* ((pkg-dir (expand-file-name package dir))
 	 (pkg-file (expand-file-name
-		    (concat (package-strip-version package) "-pkg")
+		    (format "%s-pkg" (package-strip-version package))
 		    pkg-dir)))
     (when (and (file-directory-p pkg-dir)
-	       (file-exists-p (concat pkg-file ".el")))
+	       (file-exists-p (format "%s.el" pkg-file)))
       (load pkg-file nil t))))
 
 (defun package-load-all-descriptors ()
@@ -424,7 +424,7 @@ NAME and VERSION are the package's name and version strings.
 This function checks `package-load-list', before actually loading
 the package by calling `package-load-descriptor'."
   (let ((force (assq (intern name) package-load-list))
-	(subdir (concat name "-" version)))
+	(subdir (format "%s-%s" name version)))
     (and (file-directory-p (expand-file-name subdir dir))
 	 ;; Check `package-load-list':
 	 (cond ((null force)
@@ -444,7 +444,7 @@ the package by calling `package-load-descriptor'."
 (defun package--dir (name version)
   "Return the directory where a package is installed, or nil if none.
 NAME and VERSION are both strings."
-  (let* ((subdir (concat name "-" version))
+  (let* ((subdir (format "%s-%s" name version))
 	 (dir-list (cons package-user-dir package-directory-list))
 	 pkg-dir)
     (while dir-list
@@ -470,7 +470,7 @@ NAME and VERSION are both strings."
       (push pkg-dir Info-directory-list))
     ;; Add to load path, add autoloads, and activate the package.
     (push pkg-dir load-path)
-    (load (expand-file-name (concat (symbol-name name) "-autoloads") pkg-dir) nil t)
+    (load (expand-file-name (format "%s-autoloads" name) pkg-dir) nil t)
     (push name package-activated-list)
     ;; Don't return nil.
     t))
@@ -596,8 +596,7 @@ EXTRA-PROPERTIES is currently unused."
 
 (defun package-generate-autoloads (name pkg-dir)
   (require 'autoload)         ;Load before we let-bind generated-autoload-file!
-  (let* ((auto-name (concat name "-autoloads.el"))
-	 ;;(ignore-name (concat name "-pkg.el"))
+  (let* ((auto-name (format "%s-autoloads.el" name))
 	 (generated-autoload-file (expand-file-name auto-name pkg-dir))
 	 (version-control 'never))
     (unless (fboundp 'autoload-ensure-default-file)
@@ -620,25 +619,28 @@ untar into a directory named DIR; otherwise, signal an error."
 	(error "Package does not untar cleanly into directory %s/" dir))))
   (tar-untar-buffer))
 
-(defun package-unpack (name version)
+(defun package-unpack (file-name version)
   "Unpack a tar package.
-NAME and VERSION must be strings."
-  (let* ((dirname (concat name "-" version))
+FILE-NAME and VERSION must be strings. FILE-NAME is the package
+name without a file extension or version numbers."
+  (let* ((dirname (format "%s-%s" file-name version))
 	 (pkg-dir (expand-file-name dirname package-user-dir)))
     (make-directory package-user-dir t)
     ;; FIXME: should we delete PKG-DIR if it exists?
     (let* ((default-directory (file-name-as-directory package-user-dir)))
       (package-untar-buffer dirname)
-      (package--make-autoloads-and-compile name pkg-dir))))
+      (package--make-autoloads-and-compile file-name pkg-dir))))
 
-(defun package--make-autoloads-and-compile (name pkg-dir)
-  "Generate autoloads and do byte-compilation for package named NAME.
-PKG-DIR is the name of the package directory."
-  (package-generate-autoloads name pkg-dir)
+(defun package--make-autoloads-and-compile (file-name pkg-dir)
+  "Generate autoloads and do byte-compilation for package named FILE-NAME.
+FILE-NAME and PKG-DIR must be strings. FILE-NAME is the name of
+the file to compile, without any directory parts and PKG-DIR is
+the name of the package directory."
+  (package-generate-autoloads file-name pkg-dir)
   (let ((load-path (cons pkg-dir load-path)))
     ;; We must load the autoloads file before byte compiling, in
     ;; case there are magic cookies to set up non-trivial paths.
-    (load (expand-file-name (concat name "-autoloads") pkg-dir) nil t)
+    (load (expand-file-name (format "%s-autoloads" file-name) pkg-dir) nil t)
     (byte-recompile-directory pkg-dir 0 t)))
 
 (defun package--write-file-no-coding (file-name)
@@ -648,17 +650,19 @@ PKG-DIR is the name of the package directory."
 (defun package-unpack-single (file-name version desc requires)
   "Install the contents of the current buffer as a package.
 
-FILE-NAME, VERSION, and DESC must be strings."
+FILE-NAME, VERSION, and DESC must be strings. FILE-NAME is the
+base name of the package, without a file extension or version
+numbers."
   ;; Special case "package".
   (if (string= file-name "package")
       (package--write-file-no-coding
-       (expand-file-name (concat file-name ".el") package-user-dir))
-    (let* ((pkg-dir  (expand-file-name (concat file-name "-"
+       (expand-file-name (format "%s.el" file-name) package-user-dir))
+    (let* ((pkg-dir (expand-file-name (format  "%s-%s" file-name
 					       (package-version-join
 						(version-to-list version)))
-				       package-user-dir))
-	   (el-file  (expand-file-name (concat file-name ".el") pkg-dir))
-	   (pkg-file (expand-file-name (concat file-name "-pkg.el") pkg-dir)))
+				      package-user-dir))
+	   (el-file  (expand-file-name (format "%s.el" file-name) pkg-dir))
+	   (pkg-file (expand-file-name (format "%s-pkg.el" file-name) pkg-dir)))
       (make-directory pkg-dir t)
       (package--write-file-no-coding el-file)
       (let ((print-level nil)
@@ -729,14 +733,14 @@ It will move point to somewhere in the headers."
 (defun package-download-single (name version desc requires)
   "Download and install a single-file package."
   (let ((location (package-archive-base name))
-	(file (concat (symbol-name name) "-" version ".el")))
+	(file (format "%s-%s.el" (symbol-name name) version)))
     (package--with-work-buffer location file
       (package-unpack-single (symbol-name name) version desc requires))))
 
 (defun package-download-tar (name version)
   "Download and install a tar package."
   (let ((location (package-archive-base name))
-	(file (concat (symbol-name name) "-" version ".tar")))
+	(file (format "%s-%s.tar" (symbol-name name) version)))
     (package--with-work-buffer location file
       (package-unpack (symbol-name name) version))))
 
@@ -957,7 +961,7 @@ boundaries."
   (let ((file-name (match-string-no-properties 1))
 	(desc      (match-string-no-properties 2))
 	(start     (line-beginning-position)))
-    (unless (search-forward (concat ";;; " file-name ".el ends here"))
+    (unless (search-forward (format ";;; %s.el ends here"  file-name))
       (error "Package lacks a terminating comment"))
     ;; Try to include a trailing newline.
     (forward-line)
@@ -998,10 +1002,8 @@ contain a package definition."
 	   ;; Extract the package descriptor.
 	   (pkg-def-contents (shell-command-to-string
 			      ;; Requires GNU tar.
-			      (concat "tar -xOf " file " "
-
-				      pkg-name "-" pkg-version "/"
-				      pkg-name "-pkg.el")))
+			      (format "tar -xOf %s %s-%s/%s-pkg.el"
+				      file pkg-name pkg-version pkg-name)))
 	   (pkg-def-parsed (package-read-from-string pkg-def-contents)))
       (unless (eq (car pkg-def-parsed) 'define-package)
 	(error "No `define-package' sexp is present in `%s-pkg.el'" pkg-name))
@@ -1247,7 +1249,7 @@ If optional arg NO-ACTIVATE is non-nil, don't activate packages."
 
     (if built-in
 	;; For built-in packages, insert the commentary.
-	(let ((fn (locate-file (concat package-name ".el") load-path
+	(let ((fn (locate-file (format "%s.el" package-name) load-path
 			       load-file-rep-suffixes))
 	      (opoint (point)))
 	  (insert (or (lm-commentary fn) ""))
@@ -1257,14 +1259,14 @@ If optional arg NO-ACTIVATE is non-nil, don't activate packages."
 	      (replace-match ""))
 	    (while (re-search-forward "^\\(;+ ?\\)" nil t)
 	      (replace-match ""))))
-      (let ((readme (expand-file-name (concat package-name "-readme.txt")
+      (let ((readme (expand-file-name (format "%s-readme.txt" package-name)
 				      package-user-dir))
 	    readme-string)
 	;; For elpa packages, try downloading the commentary.  If that
 	;; fails, try an existing readme file in `package-user-dir'.
 	(cond ((condition-case nil
 		   (package--with-work-buffer (package-archive-base package)
-					      (concat package-name "-readme.txt")
+					      (format "%s-readme.txt" package-name)
 		     (setq buffer-file-name
 			   (expand-file-name readme package-user-dir))
 		     (let ((version-control 'never))
@@ -1619,7 +1621,7 @@ packages marked for deletion are removed."
 	     (format "Delete these %d packages (%s)? "
 		     (length delete-list)
 		     (mapconcat (lambda (elt)
-				  (concat (car elt) "-" (cdr elt)))
+				  (format "%s-%s" (car elt) (cdr elt)))
 				delete-list
 				", "))))
 	  (dolist (elt delete-list)
