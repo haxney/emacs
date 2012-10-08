@@ -413,16 +413,16 @@ updates `package-alist' and `package-obsolete-alist'."
       (when (file-directory-p dir)
         (dolist (subdir (directory-files dir))
           (when (string-match regexp subdir)
-            (package-maybe-load-descriptor (match-string 1 subdir)
+            (package-maybe-load-descriptor (intern (match-string 1 subdir))
                                            (match-string 2 subdir)
                                            dir)))))))
 
 (defun package-maybe-load-descriptor (name version dir)
   "Maybe load a specific package from directory DIR.
-NAME and VERSION are the package's name and version strings.
-This function checks `package-load-list', before actually loading
-the package by calling `package-load-descriptor'."
-  (let ((force (assq (intern-soft name) package-load-list))
+NAME is the package name as a symbol and VERSION is the package's
+version string. This function checks `package-load-list', before
+actually loading the package by calling`package-load-descriptor'."
+  (let ((force (assq name package-load-list))
         (subdir (format "%s-%s" name version)))
     (and (file-directory-p (expand-file-name subdir dir))
          ;; Check `package-load-list':
@@ -641,8 +641,8 @@ VERSION must be a string. NAME is the package name as a symbol."
 
 (defun package--make-autoloads-and-compile (name pkg-dir)
   "Generate autoloads and do byte-compilation for package named NAME.
-PKG-DIR must be a string. NAME is the name of the file to compile
-as a symbol and PKG-DIR is the name of the package directory."
+NAME is the name of the file to compile as a symbol and PKG-DIR
+is the name of the package directory."
   (package-generate-autoloads name pkg-dir)
   (let ((load-path (cons pkg-dir load-path)))
     ;; We must load the autoloads file before byte compiling, in
@@ -656,8 +656,8 @@ as a symbol and PKG-DIR is the name of the package directory."
 
 (defun package-unpack-single (name version desc requires)
   "Install the contents of the current buffer as a package.
-NAME is the name of the package as a symbol VERSION and DESC must
-be strings."
+NAME is the name of the package as a symbol; VERSION and DESC
+must be strings."
   ;; Special case "package".
   (if (eq name 'package)
       (package--write-file-no-coding
@@ -676,16 +676,15 @@ be strings."
          (concat
           (prin1-to-string
            (list 'define-package
-                 name
+                 (symbol-name name)
                  version
                  desc
-                 (list 'quote
-                       ;; Turn version lists into string form.
-                       (mapcar
-                        (lambda (elt)
-                          (list (car elt)
-                                (package-version-join (cadr elt))))
-                        requires))))
+                 ;; Turn version lists into string form.
+                 (mapcar
+                  (lambda (elt)
+                    (list (car elt)
+                          (package-version-join (cadr elt))))
+                  requires)))
           "\n")
          nil
          pkg-file
@@ -740,14 +739,14 @@ It will move point to somewhere in the headers."
   (let ((location (package-archive-base name))
         (file (format "%s-%s.el" name version)))
     (package--with-work-buffer location file
-      (package-unpack-single (symbol-name name) version desc requires))))
+                               (package-unpack-single name version desc requires))))
 
 (defun package-download-tar (name version)
   "Download and install a tar package."
   (let ((location (package-archive-base name))
         (file (format "%s-%s.tar" name version)))
     (package--with-work-buffer location file
-      (package-unpack (symbol-name name) version))))
+                               (package-unpack name version))))
 
 (defvar package--initialized nil)
 
@@ -911,7 +910,7 @@ using `package-compute-transaction'."
       ;; If package A depends on package B, then A may `require' B
       ;; during byte compilation.  So we need to activate B before
       ;; unpacking A.
-      (package-maybe-load-descriptor (symbol-name elt) v-string
+      (package-maybe-load-descriptor elt v-string
                                      package-user-dir)
       (package-activate elt (version-to-list v-string)))))
 
@@ -1014,7 +1013,8 @@ contain a package definition."
       (unless (eq (car pkg-def-parsed) 'define-package)
         (error "No `define-package' sexp is present in `%s-pkg.el'" pkg-name))
 
-      (let ((pkg-desc (apply #'define-package-desc (cdr pkg-def-parsed) '(:kind tar))))
+      (let ((pkg-desc (apply #'define-package-desc
+                             (append (cdr pkg-def-parsed) '(:kind tar)))))
         (unless (equal (package-version-join (package-desc-version pkg-desc))
                        pkg-version)
           (error "Package has inconsistent versions"))
