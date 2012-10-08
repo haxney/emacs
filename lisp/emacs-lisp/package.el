@@ -1720,15 +1720,16 @@ The list is displayed in a buffer named `*Packages*'."
         (package-menu--generate nil t))
       ;; The package menu buffer has keybindings.  If the user types
       ;; `M-x list-packages', that suggests it should become current.
-      (switch-to-buffer buf))
+      (switch-to-buffer buf)
 
-    (let ((upgrades (package-menu--find-upgrades)))
-      (if upgrades
-          (message "%d package%s can be upgraded; type `%s' to mark %s for upgrading."
-                   (length upgrades)
-                   (if (= (length upgrades) 1) "" "s")
-                   (substitute-command-keys "\\[package-menu-mark-upgrades]")
-                   (if (= (length upgrades) 1) "it" "them"))))))
+      (let ((upgrades (package-menu--find-upgrades)))
+        (if upgrades
+            (message "%d package%s can be upgraded; type `%s' to mark %s for upgrading."
+                     (length upgrades)
+                     (if (= (length upgrades) 1) "" "s")
+                     (substitute-command-keys "\\[package-menu-mark-upgrades]")
+                     (if (= (length upgrades) 1) "it" "them"))))
+      buf)))
 
 ;;;###autoload
 (defalias 'package-list-packages 'list-packages)
