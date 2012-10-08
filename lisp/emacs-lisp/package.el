@@ -457,7 +457,7 @@ actually loading the package by calling`package-load-descriptor'."
 
 (defun package--dir (name version)
   "Return the directory where a package is installed, or nil if none.
-NAME and VERSION are both strings."
+NAME is the package name as a symbol and VERSION is a string."
   (let* ((subdir (format "%s-%s" name version))
 	 (dir-list (cons package-user-dir package-directory-list))
 	 pkg-dir)
