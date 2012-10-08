@@ -47,14 +47,7 @@
 
 (defvar simple-single-desc [cl-struct-package-desc simple-single (1 3)
 						   "A single-file package with no dependencies"
-						   nil single nil (".")
-						   ";;; Commentary:
-
-;; This package provides a minor mode to frobnicate and/or bifurcate
-;; any flanges you desire. To activate it, type \"C-M-r M-3 butterfly\"
-;; and all your dreams will come true.
-
-"]
+						   nil single nil]
   "Expected `package-desc' parsed from simple-single-1.3.el.")
 
 (defvar package-test-dir (expand-file-name "data" (file-name-directory load-file-name))
@@ -67,36 +60,39 @@
 (defvar package-test-built-file-suffixes '(".tar" "/dir" "/*.info")
   "Remove these files when cleaning up a built package.")
 
-(cl-defmacro with-package-test ((&optional &key file build-dir install) &rest body)
+(cl-defmacro with-package-test ((&optional &key file basedir build-dir install) &rest body)
   "Set up temporary locations and variables for testing."
   (declare (indent 1))
   `(let ((package-user-dir package-test-user-dir)
 	 (package-archives `(("gnu" . ,package-test-dir)))
 	 (old-yes-no-defn (symbol-function 'yes-or-no-p))
 	 ,@(if build-dir (list (list 'build-dir build-dir)
-				(list 'build-tar (concat build-dir ".tar")))
-	    (list 'none))) ;; Dummy value so `let' doesn't try to bind `nil'
-     (setf (symbol-function 'yes-or-no-p) #'ignore)
-     (unless (file-directory-p package-user-dir)
-       (mkdir package-user-dir))
-     ,(if build-dir
-	  (list 'package-test-build-multifile 'build-dir))
-     ,@(when install
-	 (list
-	  (list 'package-refresh-contents)
-	  ;; The two quotes before `package-install' are required! One is
-	  ;; consumed by the macro expansion and the other prevents trying to
-	  ;; take the `symbol-value' of `package-install'
-	  (list 'mapc ''package-install install)))
-     (with-temp-buffer
-       ,(if file
-	    (list 'insert-file-contents file))
-       ,@body)
-     ,(if build-dir
-	  (list 'package-test-cleanup-built-files build-dir))
-     (when (file-directory-p package-test-user-dir)
-       (delete-directory package-test-user-dir t))
-     (setf (symbol-function 'yes-or-no-p) old-yes-no-defn)))
+			       (list 'build-tar (concat build-dir ".tar")))
+	     (list (cl-gensym)))) ;; Dummy value so `let' doesn't try to bind `nil'
+     (unwind-protect
+	 (progn
+	   ,(if basedir (list 'cd basedir))
+	   (setf (symbol-function 'yes-or-no-p) #'ignore)
+	   (unless (file-directory-p package-user-dir)
+	     (mkdir package-user-dir))
+	   (if (boundp 'build-dir)
+		(package-test-build-multifile build-dir))
+	   ,@(when install
+	       (list
+		(list 'package-refresh-contents)
+		;; The two quotes before `package-install' are required! One is
+		;; consumed by the macro expansion and the other prevents trying to
+		;; take the `symbol-value' of `package-install'
+		(list 'mapc ''package-install install)))
+	   (with-temp-buffer
+	     ,(if file
+		  (list 'insert-file-contents file))
+	     ,@body))
+       ,(if build-dir
+	    (list 'package-test-cleanup-built-files build-dir))
+       (when (file-directory-p package-test-user-dir)
+	 (delete-directory package-test-user-dir t))
+       (setf (symbol-function 'yes-or-no-p) old-yes-no-defn))))
 
 (defun package-test-install-texinfo (file)
   "Install from texinfo FILE.
@@ -110,16 +106,18 @@ FILE should be a .texinfo file relative to the current
     (require 'info)
     (setf (symbol-function 'Info-revert-find-node) #'ignore)
     (with-current-buffer (find-file-literally full-file)
-      (require 'makeinfo)
-      (makeinfo-buffer)
-      ;; Give `makeinfo-buffer' a chance to finish
-      (while compilation-in-progress
-	(sit-for 0.1))
-      (call-process "ginstall-info" nil nil nil
-		    (format "--info-dir=%s" default-directory)
-		    (format "%s" info-file))
-      (kill-buffer))
-    (setf (symbol-function 'Info-revert-find-node) old-info-defn)))
+      (unwind-protect
+       (progn
+	 (require 'makeinfo)
+	 (makeinfo-buffer)
+	 ;; Give `makeinfo-buffer' a chance to finish
+	 (while compilation-in-progress
+	   (sit-for 0.1))
+	 (call-process "ginstall-info" nil nil nil
+		       (format "--info-dir=%s" default-directory)
+		       (format "%s" info-file)))
+       (kill-buffer)
+       (setf (symbol-function 'Info-revert-find-node) old-info-defn)))))
 
 (defun package-test-build-multifile (dir)
   "Build a tar package from a multiple-file directory DIR.
@@ -159,12 +157,12 @@ Must called from within a `tar-mode' buffer."
 
 (ert-deftest package-test-buffer-info ()
   "Parse an elisp buffer to get a `package-desc' object."
-  (with-package-test (:file "data/simple-single-1.3.el")
+  (with-package-test (:basedir "data" :file "simple-single-1.3.el")
     (should (equal (package-buffer-info) simple-single-desc))))
 
 (ert-deftest package-test-install-single ()
   "Install a single file without using an archive."
-  (with-package-test (:file "data/simple-single-1.3.el")
+  (with-package-test (:basedir "data" :file "simple-single-1.3.el")
     (should (package-install-from-buffer (package-buffer-info)))
     (let* ((simple-pkg-dir (file-name-as-directory
 			    (expand-file-name
@@ -192,7 +190,7 @@ Must called from within a `tar-mode' buffer."
 
 (ert-deftest package-test-build-multifile ()
   "Build a multi-file archive."
-  (with-package-test (:build-dir "data/multi-file-0.2.3")
+  (with-package-test (:basedir "data" :build-dir "multi-file-0.2.3")
     (should (file-exists-p build-tar))
     (let ((suffixes
 	   (remove build-tar (package-test-suffix-matches
@@ -220,7 +218,7 @@ Must called from within a `tar-mode' buffer."
 			    (expand-file-name
 			     "multi-file-0.2.3"
 			     package-test-user-dir))))
-    (with-package-test (:build-dir "data/multi-file-0.2.3"
+    (with-package-test (:basedir "data" :build-dir "multi-file-0.2.3"
 				   :install '(multi-file)
 				   :file autoload-file)
       (should (package-installed-p 'multi-file))
@@ -232,14 +230,15 @@ Must called from within a `tar-mode' buffer."
 
 (ert-deftest package-test-tar-desc ()
   "Examine the properties parsed from a tar package"
-  (with-package-test (:build-dir "multi-file-0.2.3")
+  (with-package-test (:basedir "data" :build-dir "multi-file-0.2.3")
     (let ((info (package-tar-file-info (expand-file-name build-tar))))
       (should (eq (package-desc-name info) 'multi-file))
-      (should (equal (package-desc-vers info) '(0 2 3)))
-      (should (equal (package-desc-doc info) "Example of a multi-file tar package"))
+      (should (equal (package-desc-version info) '(0 2 3)))
+      (should (equal (package-desc-summary info) "Example of a multi-file tar package"))
       (should (equal (package-desc-reqs info) nil))
       (should (equal (package-desc-kind info) 'tar))
-      (should (equal (package-desc-commentary info) "This is a bare-bones readme file for the multi-file package.\n")))))
+      ;; (should (equal (package-desc-commentary info) "This is a bare-bones readme file for the multi-file package.\n"))
+      )))
 
 (ert-deftest package-test-update-listing ()
   "Ensure installed package status is updated."
