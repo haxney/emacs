@@ -50,7 +50,7 @@
 						   nil single nil]
   "Expected `package-desc' parsed from simple-single-1.3.el.")
 
-(defvar package-test-dir (expand-file-name "data" (file-name-directory load-file-name))
+(defvar package-test-dir (expand-file-name "data/package" (file-name-directory load-file-name))
   "Base directory of package test files.")
 
 (defvar package-test-fake-contents-file
@@ -157,12 +157,12 @@ Must called from within a `tar-mode' buffer."
 
 (ert-deftest package-test-buffer-info ()
   "Parse an elisp buffer to get a `package-desc' object."
-  (with-package-test (:basedir "data" :file "simple-single-1.3.el")
+  (with-package-test (:basedir "data/package" :file "simple-single-1.3.el")
     (should (equal (package-buffer-info) simple-single-desc))))
 
 (ert-deftest package-test-install-single ()
   "Install a single file without using an archive."
-  (with-package-test (:basedir "data" :file "simple-single-1.3.el")
+  (with-package-test (:basedir "data/package" :file "simple-single-1.3.el")
     (should (package-install-from-buffer (package-buffer-info)))
     (let* ((simple-pkg-dir (file-name-as-directory
 			    (expand-file-name
@@ -190,7 +190,7 @@ Must called from within a `tar-mode' buffer."
 
 (ert-deftest package-test-build-multifile ()
   "Build a multi-file archive."
-  (with-package-test (:basedir "data" :build-dir "multi-file-0.2.3")
+  (with-package-test (:basedir "data/package" :build-dir "multi-file-0.2.3")
     (should (file-exists-p build-tar))
     (let ((suffixes
 	   (remove build-tar (package-test-suffix-matches
@@ -218,7 +218,7 @@ Must called from within a `tar-mode' buffer."
 			    (expand-file-name
 			     "multi-file-0.2.3"
 			     package-test-user-dir))))
-    (with-package-test (:basedir "data" :build-dir "multi-file-0.2.3"
+    (with-package-test (:basedir "data/package" :build-dir "multi-file-0.2.3"
 				   :install '(multi-file)
 				   :file autoload-file)
       (should (package-installed-p 'multi-file))
@@ -230,7 +230,7 @@ Must called from within a `tar-mode' buffer."
 
 (ert-deftest package-test-tar-desc ()
   "Examine the properties parsed from a tar package"
-  (with-package-test (:basedir "data" :build-dir "multi-file-0.2.3")
+  (with-package-test (:basedir "data/package" :build-dir "multi-file-0.2.3")
     (let ((info (package-tar-file-info (expand-file-name build-tar))))
       (should (eq (package-desc-name info) 'multi-file))
       (should (equal (package-desc-version info) '(0 2 3)))
