@@ -390,14 +390,29 @@ E.g., if given \"quux-23.0\", will return \"quux\""
 
 (defun package-load-descriptor (name version dir)
   "Load the description file in directory DIR for package NAME.
-NAME and VERSION must be strings."
+NAME is the package name as a symbol and VERSION must be a
+string."
   (let* ((pkg-dir (expand-file-name (format "%s-%s" name version) dir))
 	 (pkg-file (expand-file-name
-		    (format "%s-pkg" name)
-		    pkg-dir)))
-    (when (and (file-directory-p pkg-dir)
-	       (file-exists-p (format "%s.el" pkg-file)))
-      (load pkg-file nil t))))
+		    (format "%s-pkg.el" name)
+		    pkg-dir))
+	 (pkg-def-contents (with-temp-buffer
+			     (insert-file-literally pkg-file)
+			     (buffer-string)))
+	 (pkg-def-parsed (package-read-from-string pkg-def-contents))
+	 pkg-desc)
+
+    (unless (eq (car pkg-def-parsed) 'define-package)
+      (error "No `define-package' sexp is present in `%s-pkg.el'" name))
+
+    (setq pkg-desc (apply #'define-package-desc
+			  (append (cdr pkg-def-parsed) '(:kind tar))))
+    (unless (equal (package-version-join (package-desc-version pkg-desc))
+		   pkg-version)
+      (error "Package has inconsistent versions"))
+    (unless (eq (package-desc-name pkg-desc) name)
+      (error "Package has inconsistent names"))
+    pkg-desc))
 
 (defun package-load-all-descriptors ()
   "Load descriptors for installed Emacs Lisp packages.
