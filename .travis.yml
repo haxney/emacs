@@ -1,0 +1,3 @@
+language: emacs-lisp
+before_install: ./autogen.sh
+script: ./configure && make check
