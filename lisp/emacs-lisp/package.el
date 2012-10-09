@@ -279,12 +279,16 @@ contrast, `package-user-dir' contains packages for personal use."
   :version "24.1")
 
 (cl-defstruct (package-desc
+	       ;; Rename the default constructor from `make-package-desc'.
+	       (:constructor package-desc-create)
+	       ;; Has the same interface as the old `define-package',
+	       ;; which is still used in the "foo-pkg.el" files. Extra
+	       ;; options can be supported by adding additional keys.
 	       (:constructor
-		define-package-desc
-
+		package-desc-from-define
 		(name-string version-string &optional summary requirements
 			     &key kind archive
-			     &aux (name (intern-soft name-string))
+			     &aux (name (intern name-string))
 			     (version (ignore-errors (version-to-list version-string)))
 			     (reqs (mapcar
 				    (lambda (elt)
@@ -392,7 +396,8 @@ E.g., if given \"quux-23.0\", will return \"quux\""
   "Load the description file in directory DIR for package NAME.
 NAME is the package name as a symbol and VERSION must be a
 string."
-  (let* ((pkg-dir (expand-file-name (format "%s-%s" name version) dir))
+  (let* ((old-pkg (cdr-safe (assq name package-alist)))
+	 (pkg-dir (expand-file-name (format "%s-%s" name version) dir))
 	 (pkg-file (expand-file-name
 		    (format "%s-pkg.el" name)
 		    pkg-dir))
@@ -405,13 +410,31 @@ string."
     (unless (eq (car pkg-def-parsed) 'define-package)
       (error "No `define-package' sexp is present in `%s-pkg.el'" name))
 
-    (setq pkg-desc (apply #'define-package-desc
+    (setq pkg-desc (apply #'package-desc-from-define
 			  (append (cdr pkg-def-parsed) '(:kind tar))))
     (unless (equal (package-version-join (package-desc-version pkg-desc))
-		   pkg-version)
+		   version)
       (error "Package has inconsistent versions"))
     (unless (eq (package-desc-name pkg-desc) name)
       (error "Package has inconsistent names"))
+
+    (cond
+     ;; If there's no old package, just add this to `package-alist'.
+     ((null old-pkg)
+      (push (cons name pkg-desc) package-alist))
+     ((version-list-< (package-desc-version old-pkg)
+		      (version-to-list version))
+      ;; Remove the old package and declare it obsolete.
+      (package-mark-obsolete old-pkg)
+      (cl-delete (package-desc-name old-pkg) package-alist :key 'car)
+      (push package-alist (cons name pkg-desc)))
+     ;; You can have two packages with the same version, e.g. one in
+     ;; the system package directory and one in your private
+     ;; directory.  We just let the first one win.
+     ((not (version-list-= (package-desc-version old-pkg)
+			   (version-to-list version)))
+      ;; The package is born obsolete.
+      (package-mark-obsolete pkg-desc)))
     pkg-desc))
 
 (defun package-load-all-descriptors ()
@@ -549,45 +572,6 @@ Required package `%s-%s' is unavailable"
       ;; Make a new association.
       (push (cons name (list (cons pkg-version pkg-desc)))
 	    package-obsolete-alist))))
-
-(defun define-package (name-string version-string
-				&optional summary requirements
-				&rest _extra-properties)
-  "Define a new package.
-NAME-STRING is the name of the package, as a string.
-VERSION-STRING is the version of the package, as a string.
-SUMMARY is a short description of the package, a string.
-REQUIREMENTS is a list of dependencies on other packages.
- Each requirement is of the form (OTHER-PACKAGE OTHER-VERSION),
- where OTHER-VERSION is a string.
-
-EXTRA-PROPERTIES is currently unused."
-  (let* ((name (intern name-string))
-	 (version (version-to-list version-string))
-	 (new-pkg-desc
-	  (cons name
-		(apply 'define-package-desc
-		       name-string
-		       version-string
-		       summary
-		       requirements
-		       _extra-properties)))
-	 (old-pkg (assq name package-alist)))
-    (cond
-     ;; If there's no old package, just add this to `package-alist'.
-     ((null old-pkg)
-      (push new-pkg-desc package-alist))
-     ((version-list-< (package-desc-version (cdr old-pkg)) version)
-      ;; Remove the old package and declare it obsolete.
-      (package-mark-obsolete (cdr old-pkg))
-      (setq package-alist (cons new-pkg-desc
-				(delq old-pkg package-alist))))
-     ;; You can have two packages with the same version, e.g. one in
-     ;; the system package directory and one in your private
-     ;; directory.  We just let the first one win.
-     ((not (version-list-= (package-desc-version (cdr old-pkg)) version))
-      ;; The package is born obsolete.
-      (package-mark-obsolete (cdr new-pkg-desc))))))
 
 ;; From Emacs 22.
 (defun package-autoload-ensure-default-file (file)
@@ -754,15 +738,15 @@ It will move point to somewhere in the headers."
     (package--with-work-buffer location file
 			       (package-unpack name version))))
 
-(defun package-installed-p (package &optional min-version)
-  "Return true if PACKAGE, of MIN-VERSION or newer, is installed.
-MIN-VERSION should be a version list."
-  (let ((pkg-desc (assq package package-alist)))
+(defun package-installed-p (name &optional min-version)
+  "Return true if NAME, of MIN-VERSION or newer, is installed.
+NAME must be a symbol and MIN-VERSION must be a version list."
+  (let ((pkg-desc (assq name package-alist)))
     (if pkg-desc
 	(version-list-<= min-version
 			 (package-desc-version (cdr pkg-desc)))
       ;; Also check built-in packages.
-      (package-built-in-p package min-version))))
+      (package-built-in-p name min-version))))
 
 (defun package-compute-transaction (package-list requirements)
   "Return a list of packages to be installed, including PACKAGE-LIST.
@@ -869,12 +853,15 @@ If the archive version is too new, signal an error."
 Also, add the originating archive to the `package-desc' structure."
   (let* ((name (car package))
 	 (pkg-desc
-	  (make-package-desc :name name
-			     :version (aref (cdr package) 0)
-			     :reqs (aref (cdr package) 1)
-			     :summary (aref (cdr package) 2)
-			     :kind (aref (cdr package) 3)
-			     :archive archive))
+	  ;; These are the offsets into the "archive-contents"
+	  ;; array. They are formatted this way for historical reasons
+	  ;; which is why they are magic numbers here.
+	  (package-desc-create :name name
+			       :version (aref (cdr package) 0)
+			       :reqs (aref (cdr package) 1)
+			       :summary (aref (cdr package) 2)
+			       :kind (aref (cdr package) 3)
+			       :archive archive))
 	 (entry (cons name pkg-desc))
 	 (existing-package (assq name package-archive-contents)))
     (cond ((not existing-package)
@@ -969,7 +956,7 @@ boundaries."
   (unless (re-search-forward "^;;; \\([^ ]*\\)\\.el ---[ \t]*\\(.*?\\)[ \t]*\\(-\\*-.*-\\*-[ \t]*\\)?$" nil t)
     (error "Packages lacks a file header"))
   (let ((file-name (match-string-no-properties 1))
-	(desc      (match-string-no-properties 2))
+	(summary   (match-string-no-properties 2))
 	(start     (line-beginning-position)))
     (unless (search-forward (format ";;; %s.el ends here"  file-name))
       (error "Package lacks a terminating comment"))
@@ -991,12 +978,11 @@ boundaries."
 	(error
 	 "Package lacks a \"Version\" or \"Package-Version\" header"))
 
-      (define-package-desc
-	file-name
-	pkg-version
-	desc
-	requires
-	:kind 'single))))
+      (package-desc-create :name (intern file-name)
+			   :version (version-to-list pkg-version)
+			   :summary summary
+			   :reqs requires
+			   :kind 'single))))
 
 (defun package-tar-file-info (file)
   "Build a `package-desc' from the contents of a tar file.
@@ -1018,7 +1004,7 @@ contain a package definition."
       (unless (eq (car pkg-def-parsed) 'define-package)
 	(error "No `define-package' sexp is present in `%s-pkg.el'" pkg-name))
 
-      (let ((pkg-desc (apply #'define-package-desc
+      (let ((pkg-desc (apply #'package-desc-from-define
 			     (append (cdr pkg-def-parsed) '(:kind tar)))))
 	(unless (equal (package-version-join (package-desc-version pkg-desc))
 		       pkg-version)
