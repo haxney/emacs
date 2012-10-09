@@ -1,3 +1,6 @@
 language: emacs-lisp
-before_install: ./autogen.sh
-script: ./configure && make check
+notifications:
+  email: false
+before_install: sudo apt-get build-dep -y emacs
+before_script: ./autogen.sh
+script: ./configure && make && make check
