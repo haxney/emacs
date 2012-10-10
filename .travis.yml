@@ -1,6 +1,6 @@
 language: emacs-lisp
-notifications:
-  email: false
+notifications: { email: false }
+branches: { only: travis }
 before_install:
   - sudo apt-get build-dep -y emacs
   - ./autogen.sh
