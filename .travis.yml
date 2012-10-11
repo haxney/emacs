@@ -2,6 +2,6 @@ language: emacs-lisp
 notifications: { email: false }
 branches: { only: travis }
 before_install:
-  - sudo apt-get build-dep -y emacs
+  - sudo apt-get build-dep -qq -y emacs
   - ./autogen.sh
-script: ./configure && make && make check
+script: ./configure --quiet && make --quiet && make check
