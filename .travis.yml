@@ -1,0 +1,9 @@
+language: emacs-lisp
+notifications: { email: false }
+branches: { only: package-defstruct }
+before_install: sudo apt-get build-dep -qq -y emacs > /dev/null
+before_script:
+  - ./autogen.sh > /dev/null
+  - ./configure --quiet > /dev/null
+  - make --quiet > /dev/null
+script: make check
