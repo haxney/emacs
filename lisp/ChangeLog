@@ -1,3 +1,11 @@
+2012-10-28  Daniel Hackney  <dan@haxney.org>
+
+        * emacs-lisp/package.el (package-generate-autoloads): Kill buffer
+        "PKGNAME-autoloads.el". This prevents the buffers from sticking
+        around after a package installation. If the package is updated or
+        deleted, the left-over buffer can interrupt the automated flow of
+        things.
+
 2012-10-27  Eli Zaretskii  <eliz@gnu.org>
 
 	* profiler.el (profiler-report-make-entry-part): Fix help-echo
