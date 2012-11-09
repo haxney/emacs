@@ -221,6 +221,7 @@ Must called from within a `tar-mode' buffer."
     (with-package-test (:basedir "data/package" :build-dir "multi-file-0.2.3"
 				 :install '(multi-file)
 				 :file autoload-file)
+		       (package-initialize)
 		       (should (package-installed-p 'multi-file))
 		       (dolist (fn installed-files)
 			 (should (file-exists-p (expand-file-name fn pkg-dir))))
