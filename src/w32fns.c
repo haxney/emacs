@@ -211,7 +211,7 @@ static void w32_show_hourglass (struct frame *);
 static void w32_hide_hourglass (void);
 
 #ifdef WINDOWSNT
-/* From w32inevet.c */
+/* From w32inevt.c */
 extern int faked_key;
 #endif /* WINDOWSNT */
 
@@ -2333,7 +2333,9 @@ w32_name_of_message (UINT msg)
 }
 #endif /* EMACSDEBUG */
 
-/* Here's an overview of how Emacs input works on MS-Windows.
+/* Here's an overview of how Emacs input works in GUI sessions on
+   MS-Windows.  (For description of non-GUI input, see the commentary
+   before w32_console_read_socket in w32inevt.c.)
 
    System messages are read and processed by w32_msg_pump below.  This
    function runs in a separate thread.  It handles a small number of
@@ -2422,7 +2424,7 @@ w32_msg_pump (deferred_msg * msg_buf)
                  thread-safe.  The next line is okay because the cons
                  cell is never made into garbage and is not relocated by
                  GC.  */
-	      XSETCAR ((Lisp_Object) ((EMACS_INT) msg.lParam), Qnil);
+	      XSETCAR (XIL ((EMACS_INT) msg.lParam), Qnil);
 	      if (!PostThreadMessage (dwMainThreadId, WM_EMACS_DONE, 0, 0))
 		emacs_abort ();
 	      break;
@@ -2430,7 +2432,7 @@ w32_msg_pump (deferred_msg * msg_buf)
 	      {
 		int vk_code = (int) msg.wParam;
 		int cur_state = (GetKeyState (vk_code) & 1);
-		Lisp_Object new_state = (Lisp_Object) ((EMACS_INT) msg.lParam);
+		Lisp_Object new_state = XIL ((EMACS_INT) msg.lParam);
 
 		/* NB: This code must be thread-safe.  It is safe to
                    call NILP because symbols are not relocated by GC,
@@ -3329,7 +3331,19 @@ w32_wnd_proc (HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	 versions, there is no way of telling when the mouse leaves the
 	 frame, so we just have to put up with help-echo and mouse
 	 highlighting remaining while the frame is not active.  */
-      if (track_mouse_event_fn && !track_mouse_window)
+      if (track_mouse_event_fn && !track_mouse_window
+	  /* If the menu bar is active, turning on tracking of mouse
+	     movement events might send these events to the tooltip
+	     frame, if the user happens to move the mouse pointer over
+	     the tooltip.  But since we don't process events for
+	     tooltip frames, this causes Windows to present a
+	     hourglass cursor, which is ugly and unexpected.  So don't
+	     enable tracking mouse events in this case; they will be
+	     restarted when the menu pops down.  (Confusingly, the
+	     menubar_active member of f->output_data.w32, tested
+	     above, is only set when a menu was popped up _not_ from
+	     the frame's menu bar, but via x-popup-menu.)  */
+	  && !menubar_in_use)
 	{
 	  TRACKMOUSEEVENT tme;
 	  tme.cbSize = sizeof (tme);
@@ -4642,22 +4656,14 @@ If omitted or nil, that stands for the selected frame's display.  */)
   (Lisp_Object display)
 {
   struct w32_display_info *dpyinfo = check_x_display_info (display);
-  HDC hdc;
   int cap;
 
-  hdc = GetDC (dpyinfo->root_window);
-  if (dpyinfo->has_palette)
-    cap = GetDeviceCaps (hdc, SIZEPALETTE);
-  else
-    cap = GetDeviceCaps (hdc, NUMCOLORS);
+  /* Don't use NCOLORS: it returns incorrect results under remote
+   * desktop.  We force 24+ bit depths to 24-bit, both to prevent an
+   * overflow and because probably is more meaningful on Windows
+   * anyway.  */
 
-  /* We force 24+ bit depths to 24-bit, both to prevent an overflow
-     and because probably is more meaningful on Windows anyway */
-  if (cap < 0)
-    cap = 1 << min (dpyinfo->n_planes * dpyinfo->n_cbits, 24);
-
-  ReleaseDC (dpyinfo->root_window, hdc);
-
+  cap = 1 << min (dpyinfo->n_planes * dpyinfo->n_cbits, 24);
   return make_number (cap);
 }
 
@@ -6991,8 +6997,10 @@ w32_strerror (int error_no)
   return buf;
 }
 
-/* For convenience when debugging.  */
-int
+/* For convenience when debugging.  (You cannot call GetLastError
+   directly from GDB: it will crash, because it uses the __stdcall
+   calling convention, not the _cdecl convention assumed by GDB.)  */
+DWORD
 w32_last_error (void)
 {
   return GetLastError ();
@@ -7715,4 +7723,3 @@ emacs_abort (void)
       break;
     }
 }
-

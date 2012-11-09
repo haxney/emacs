@@ -140,6 +140,20 @@ program `dired-chmod-program', which must exist."
 		 (other :tag "Bits freely editable" advanced))
   :group 'wdired)
 
+(defcustom wdired-keep-marker-rename t
+  ;; Use t as default so that renamed files "take their markers with them".
+  "Controls marking of files renamed in WDired.
+If t, files keep their previous marks when they are renamed.
+If a character, renamed files (whether previously marked or not)
+are afterward marked with that character.
+This option affects only files renamed by `wdired-finish-edit'.
+See `dired-keep-marker-rename' if you want to do the same for files
+renamed by `dired-do-rename' and `dired-do-rename-regexp'."
+  :type '(choice (const :tag "Keep" t)
+		 (character :tag "Mark" :value ?R))
+  :version "24.3"
+  :group 'wdired)
+
 (defvar wdired-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map "\C-x\C-s" 'wdired-finish-edit)
@@ -180,7 +194,7 @@ program `dired-chmod-program', which must exist."
 (defvar wdired-col-perm) ;; Column where the permission bits start
 (defvar wdired-old-content)
 (defvar wdired-old-point)
-
+(defvar wdired-old-marks)
 
 (defun wdired-mode ()
   "Writable Dired (WDired) mode.
@@ -221,6 +235,8 @@ See `wdired-mode'."
     (error "Not a Dired buffer"))
   (set (make-local-variable 'wdired-old-content)
        (buffer-substring (point-min) (point-max)))
+  (set (make-local-variable 'wdired-old-marks)
+       (dired-remember-marks (point-min) (point-max)))
   (set (make-local-variable 'wdired-old-point) (point))
   (set (make-local-variable 'query-replace-skip-read-only) t)
   (set (make-local-variable 'isearch-filter-predicate)
@@ -414,6 +430,8 @@ non-nil means return old filename."
   (set-buffer-modified-p nil)
   (setq buffer-undo-list nil))
 
+(declare-function dired-add-entry "dired-aux" (filename &optional marker-char relative))
+
 (defun wdired-do-renames (renames)
   "Perform RENAMES in parallel."
   (let ((residue ())
@@ -455,7 +473,8 @@ non-nil means return old filename."
               (push (cons tmp file-new) residue))))
          (t
           (setq progress t)
-          (let ((file-ori (car rename)))
+          (let* ((file-ori (car rename))
+                 (old-mark (cdr (assoc file-ori wdired-old-marks))))
             (if wdired-use-interactive-rename
                 (wdired-search-and-rename file-ori file-new)
               ;; If dired-rename-file autoloads dired-aux while
@@ -466,12 +485,20 @@ non-nil means return old filename."
               (condition-case err
                   (let ((dired-backup-overwrite nil))
                     (dired-rename-file file-ori file-new
-                                       overwrite))
+                                       overwrite)
+                    (dired-remove-file file-ori)
+                    (dired-add-file
+		     file-new
+		     (cond ((integerp wdired-keep-marker-rename)
+			    wdired-keep-marker-rename)
+			   (wdired-keep-marker-rename old-mark)
+			   (t nil))))
                 (error
                  (setq errors (1+ errors))
                  (dired-log (concat "Rename `" file-ori "' to `"
                                     file-new "' failed:\n%s\n")
-                            err)))))))))
+                            err)
+                 (dired-add-entry file-ori old-mark)))))))))
     errors))
 
 

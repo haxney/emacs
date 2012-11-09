@@ -99,8 +99,10 @@
 
 (require 'erc-compat)
 (eval-when-compile (require 'cl))
-(autoload 'erc-with-buffer "erc" nil nil 'macro)
-(autoload 'erc-log "erc" nil nil 'macro)
+;; There's a fairly strong mutual dependency between erc.el and erc-backend.el.
+;; Luckily, erc.el does not need erc-backend.el for macroexpansion whereas the
+;; reverse is true:
+(eval-when-compile (provide 'erc-backend) (require 'erc))
 
 ;;;; Variables and options
 

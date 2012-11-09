@@ -34,18 +34,15 @@ along with GNU Emacs.  If not, see <http://www.gnu.org/licenses/>.  */
 #ifdef WINDOWSNT
 #include <fcntl.h>
 #include "w32.h"
-#endif
-
-#if defined (WINDOWSNT)
 #include "w32heap.h"
 #endif
 
-#if defined (WINDOWSNT) || defined (HAVE_NTGUI)
+#if defined WINDOWSNT || defined HAVE_NTGUI
 #include "w32select.h"
 #include "w32font.h"
 #endif
 
-#if defined (HAVE_NTGUI) && defined (CYGWIN)
+#if defined HAVE_NTGUI && defined CYGWIN
 #include "cygw32.h"
 #endif
 
@@ -179,7 +176,7 @@ static uprintmax_t heap_bss_diff;
    We mark being in the exec'd process by a daemon name argument of
    form "--daemon=\nFD0,FD1\nNAME" where FD are the pipe file descriptors,
    NAME is the original daemon name, if any. */
-#if defined (NS_IMPL_COCOA) || (defined (HAVE_NTGUI) && defined (CYGWIN))
+#if defined NS_IMPL_COCOA || (defined HAVE_NTGUI && defined CYGWIN)
 # define DAEMON_MUST_EXEC
 #endif
 
@@ -698,7 +695,7 @@ main (int argc, char **argv)
   char *dname_arg = 0;
 #ifdef DAEMON_MUST_EXEC
   char dname_arg2[80];
-#endif /* DAEMON_MUST_EXEC */
+#endif
   char *ch_to_dir;
 
 #if GC_MARK_STACK
@@ -1094,19 +1091,14 @@ Using an Emacs configured with --with-x-toolkit=lucid does not have this problem
 #endif /* DOS_NT */
     }
 
+#if defined (HAVE_PTHREAD) && !defined (SYSTEM_MALLOC) && !defined (DOUG_LEA_MALLOC)
   if (! noninteractive)
     {
-#if defined (USG5) && defined (INTERRUPT_INPUT)
-      setpgrp ();
-#endif
-#if defined (HAVE_PTHREAD) && !defined (SYSTEM_MALLOC) && !defined (DOUG_LEA_MALLOC)
-      {
-        extern void malloc_enable_thread (void);
+      extern void malloc_enable_thread (void);
 
-	malloc_enable_thread ();
-      }
-#endif
+      malloc_enable_thread ();
     }
+#endif
 
   init_signals (dumping);
 
@@ -1378,9 +1370,9 @@ Using an Emacs configured with --with-x-toolkit=lucid does not have this problem
 #ifdef WINDOWSNT
       syms_of_ntproc ();
 #endif /* WINDOWSNT */
-#if defined (CYGWIN) && defined (HAVE_NTGUI)
+#if defined CYGWIN && defined HAVE_NTGUI
       syms_of_cygw32 ();
-#endif /* defined(CYGWIN) && defined (HAVE_NTGUI) */
+#endif
       syms_of_window ();
       syms_of_xdisp ();
       syms_of_font ();
@@ -1415,9 +1407,9 @@ Using an Emacs configured with --with-x-toolkit=lucid does not have this problem
       syms_of_fontset ();
 #endif /* HAVE_NTGUI */
 
-#if defined (WINDOWSNT) || defined (HAVE_NTGUI)
+#if defined WINDOWSNT || defined HAVE_NTGUI
       syms_of_w32select ();
-#endif /* WINDOWSNT || HAVE_NTGUI */
+#endif
 
 #ifdef MSDOS
       syms_of_xmenu ();
@@ -1465,10 +1457,9 @@ Using an Emacs configured with --with-x-toolkit=lucid does not have this problem
       globals_of_w32menu ();
 #endif  /* HAVE_NTGUI */
 
-#if defined (WINDOWSNT) || defined (HAVE_NTGUI)
+#if defined WINDOWSNT || defined HAVE_NTGUI
       globals_of_w32select ();
-#endif /* WINDOWSNT || HAVE_NTGUI */
-
+#endif
     }
 
   init_charset ();
@@ -1907,8 +1898,8 @@ shut_down_emacs (int sig, Lisp_Object stuff)
   /* If we are controlling the terminal, reset terminal modes.  */
 #ifndef DOS_NT
   {
-    int pgrp = EMACS_GETPGRP (0);
-    int tpgrp = tcgetpgrp (0);
+    pid_t pgrp = EMACS_GETPGRP (0);
+    pid_t tpgrp = tcgetpgrp (0);
     if ((tpgrp != -1) && tpgrp == pgrp)
       {
 	reset_all_sys_modes ();

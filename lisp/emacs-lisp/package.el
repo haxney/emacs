@@ -600,7 +600,8 @@ Required package `%s-%s' is unavailable"
     (unless (fboundp 'autoload-ensure-default-file)
       (package-autoload-ensure-default-file generated-autoload-file))
     (update-directory-autoloads pkg-dir)
-    (kill-buffer (get-buffer auto-name))))
+    (let ((buf (find-buffer-visiting generated-autoload-file)))
+      (when buf (kill-buffer buf)))))
 
 (defvar tar-parse-info)
 (declare-function tar-untar-buffer "tar-mode" ())
@@ -741,6 +742,7 @@ It will move point to somewhere in the headers."
 (defun package-installed-p (name &optional min-version)
   "Return true if NAME, of MIN-VERSION or newer, is installed.
 NAME must be a symbol and MIN-VERSION must be a version list."
+  (unless package--initialized (error "package.el is not yet initialized!"))
   (let ((pkg-desc (assq name package-alist)))
     (if pkg-desc
 	(version-list-<= min-version

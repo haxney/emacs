@@ -1124,7 +1124,7 @@ delete_frame (Lisp_Object frame, Lisp_Object force)
   struct frame *sf = SELECTED_FRAME ();
   struct kboard *kb;
 
-  int minibuffer_selected, tooltip_frame;
+  int minibuffer_selected, is_tooltip_frame;
 
   if (EQ (frame, Qnil))
     {
@@ -1176,13 +1176,13 @@ delete_frame (Lisp_Object frame, Lisp_Object force)
 	}
     }
 
-  tooltip_frame = !NILP (Fframe_parameter (frame, intern ("tooltip")));
+  is_tooltip_frame = !NILP (Fframe_parameter (frame, intern ("tooltip")));
 
   /* Run `delete-frame-functions' unless FORCE is `noelisp' or
      frame is a tooltip.  FORCE is set to `noelisp' when handling
      a disconnect from the terminal, so we don't dare call Lisp
      code.  */
-  if (NILP (Vrun_hooks) || tooltip_frame)
+  if (NILP (Vrun_hooks) || is_tooltip_frame)
     ;
   else if (EQ (force, Qnoelisp))
     pending_funcalls
@@ -1461,7 +1461,7 @@ delete_frame (Lisp_Object frame, Lisp_Object force)
     }
 
   /* Cause frame titles to update--necessary if we now have just one frame.  */
-  if (!tooltip_frame)
+  if (!is_tooltip_frame)
     update_mode_lines = 1;
 
   return Qnil;
@@ -1501,10 +1501,7 @@ and returns whatever that function returns.  */)
 {
   FRAME_PTR f;
   Lisp_Object lispy_dummy;
-  enum scroll_bar_part party_dummy;
   Lisp_Object x, y, retval;
-  int col, row;
-  Time long_dummy;
   struct gcpro gcpro1;
 
   f = SELECTED_FRAME ();
@@ -1513,14 +1510,19 @@ and returns whatever that function returns.  */)
 #if defined (HAVE_MOUSE) || defined (HAVE_GPM)
   /* It's okay for the hook to refrain from storing anything.  */
   if (FRAME_TERMINAL (f)->mouse_position_hook)
-    (*FRAME_TERMINAL (f)->mouse_position_hook) (&f, -1,
-                                                &lispy_dummy, &party_dummy,
-                                                &x, &y,
-                                                &long_dummy);
+    {
+      enum scroll_bar_part party_dummy;
+      Time time_dummy;
+      (*FRAME_TERMINAL (f)->mouse_position_hook) (&f, -1,
+						  &lispy_dummy, &party_dummy,
+						  &x, &y,
+						  &time_dummy);
+    }
+
   if (! NILP (x))
     {
-      col = XINT (x);
-      row = XINT (y);
+      int col = XINT (x);
+      int row = XINT (y);
       pixel_to_glyph_coords (f, col, row, &col, &row, NULL, 1);
       XSETINT (x, col);
       XSETINT (y, row);
@@ -1547,9 +1549,7 @@ and nil for X and Y.  */)
 {
   FRAME_PTR f;
   Lisp_Object lispy_dummy;
-  enum scroll_bar_part party_dummy;
   Lisp_Object x, y;
-  Time long_dummy;
 
   f = SELECTED_FRAME ();
   x = y = Qnil;
@@ -1557,10 +1557,15 @@ and nil for X and Y.  */)
 #if defined (HAVE_MOUSE) || defined (HAVE_GPM)
   /* It's okay for the hook to refrain from storing anything.  */
   if (FRAME_TERMINAL (f)->mouse_position_hook)
-    (*FRAME_TERMINAL (f)->mouse_position_hook) (&f, -1,
-                                                &lispy_dummy, &party_dummy,
-                                                &x, &y,
-                                                &long_dummy);
+    {
+      enum scroll_bar_part party_dummy;
+      Time time_dummy;
+      (*FRAME_TERMINAL (f)->mouse_position_hook) (&f, -1,
+						  &lispy_dummy, &party_dummy,
+						  &x, &y,
+						  &time_dummy);
+    }
+
 #endif
   XSETFRAME (lispy_dummy, f);
   return Fcons (lispy_dummy, Fcons (x, y));
@@ -2469,11 +2474,8 @@ In the Gtk+ version of Emacs, it includes only any window (including
 the minibuffer or echo area), mode line, and header line.  It does not
 include the tool bar or menu bar.
 
-With the Motif or Lucid toolkits, it also includes the tool bar (but
-not the menu bar).
-
-In a graphical version with no toolkit, it includes both the tool bar
-and menu bar.
+With other graphical versions, it also includes the tool bar and the
+menu bar.
 
 For a text terminal, it includes the menu bar.  In this case, the
 result is really in characters rather than pixels (i.e., is identical
@@ -3236,6 +3238,9 @@ x_set_font (struct frame *f, Lisp_Object arg, Lisp_Object oldval)
 	{
 	  Lisp_Object ascii_font = fontset_ascii (fontset);
 	  Lisp_Object spec = font_spec_from_name (ascii_font);
+
+	  if (NILP (spec))
+	    signal_error ("Invalid font name", ascii_font);
 
 	  if (! font_match_p (spec, font_object))
 	    fontset = -1;

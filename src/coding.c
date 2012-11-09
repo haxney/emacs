@@ -343,6 +343,10 @@ Lisp_Object Qcoding_system_p, Qcoding_system_error;
 Lisp_Object Qemacs_mule, Qraw_text;
 Lisp_Object Qutf_8_emacs;
 
+#if defined (WINDOWSNT) || defined (CYGWIN)
+static Lisp_Object Qutf_16le;
+#endif
+
 /* Coding-systems are handed between Emacs Lisp programs and C internal
    routines by the following three variables.  */
 /* Coding system to be used to encode text for terminal display when
@@ -415,7 +419,7 @@ enum iso_code_class_type
     ISO_shift_out,		/* ISO_CODE_SO (0x0E) */
     ISO_shift_in,		/* ISO_CODE_SI (0x0F) */
     ISO_single_shift_2_7,	/* ISO_CODE_SS2_7 (0x19) */
-    ISO_escape,			/* ISO_CODE_SO (0x1B) */
+    ISO_escape,			/* ISO_CODE_ESC (0x1B) */
     ISO_control_1,		/* Control codes in the range
 				   0x80..0x9F, except for the
 				   following 3 codes.  */
@@ -6301,6 +6305,9 @@ detect_coding (struct coding_system *coding)
 		{
 		  category = coding_priorities[i];
 		  this = coding_categories + category;
+		  /* Some of this->detector (e.g. detect_coding_sjis)
+		     require this information.  */
+		  coding->id = this->id;
 		  if (this->id < 0)
 		    {
 		      /* No coding system of this category is defined.  */
@@ -7967,6 +7974,40 @@ preferred_coding_system (void)
 
   return CODING_ID_NAME (id);
 }
+
+#if defined (WINDOWSNT) || defined (CYGWIN)
+
+Lisp_Object
+from_unicode (Lisp_Object str)
+{
+  CHECK_STRING (str);
+  if (!STRING_MULTIBYTE (str) &&
+      SBYTES (str) & 1)
+    {
+      str = Fsubstring (str, make_number (0), make_number (-1));
+    }
+
+  return code_convert_string_norecord (str, Qutf_16le, 0);
+}
+
+wchar_t *
+to_unicode (Lisp_Object str, Lisp_Object *buf)
+{
+  *buf = code_convert_string_norecord (str, Qutf_16le, 1);
+  /* We need to make a another copy (in addition to the one made by
+     code_convert_string_norecord) to ensure that the final string is
+     _doubly_ zero terminated --- that is, that the string is
+     terminated by two zero bytes and one utf-16le null character.
+     Because strings are already terminated with a single zero byte,
+     we just add one additional zero. */
+  str = make_uninit_string (SBYTES (*buf) + 1);
+  memcpy (SDATA (str), SDATA (*buf), SBYTES (*buf));
+  SDATA (str) [SBYTES (*buf)] = '\0';
+  *buf = str;
+  return WCSDATA (*buf);
+}
+
+#endif /* WINDOWSNT || CYGWIN */
 
 
 #ifdef emacs
@@ -10280,6 +10321,11 @@ syms_of_coding (void)
 
   DEFSYM (Qutf_8, "utf-8");
   DEFSYM (Qutf_8_emacs, "utf-8-emacs");
+
+#if defined (WINDOWSNT) || defined (CYGWIN)
+  /* No, not utf-16-le: that one has a BOM.  */
+  DEFSYM (Qutf_16le, "utf-16le");
+#endif
 
   DEFSYM (Qutf_16, "utf-16");
   DEFSYM (Qbig, "big");
