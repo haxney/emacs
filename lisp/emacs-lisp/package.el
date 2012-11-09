@@ -619,7 +619,7 @@ untar into a directory named DIR; otherwise, signal an error."
 	(error "Package does not untar cleanly into directory %s/" dir))))
   (tar-untar-buffer))
 
-(defun package-unpack (name version)
+(defun package-unpack-tar (name version)
   "Unpack a tar package.
 VERSION must be a string. NAME is the package name as a symbol."
   (let* ((dirname (format "%s-%s" name version))
@@ -737,7 +737,7 @@ It will move point to somewhere in the headers."
   (let ((location (package-archive-base name))
 	(file (format "%s-%s.tar" name version)))
     (package--with-work-buffer location file
-			       (package-unpack name version))))
+			       (package-unpack-tar name version))))
 
 (defun package-installed-p (name &optional min-version)
   "Return true if NAME, of MIN-VERSION or newer, is installed.
@@ -1043,7 +1043,7 @@ When called from Lisp, PKG-DESC is a `package-desc' structure."
 				 (package-desc-summary pkg-desc)
 				 requires))
 	 ((eq kind 'tar)
-	  (package-unpack name (package-version-join pkg-version)))
+	  (package-unpack-tar name (package-version-join pkg-version)))
 	 (t
 	  (error "Unknown package type: %s" kind)))
 	;; Try to activate it.
