@@ -1077,37 +1077,6 @@ boundaries."
       (package-desc-from-define
        file-name pkg-version summary requires-str :kind 'single))))
 
-(defun package-tar-file-info (file)
-  "Build a `package-desc' from the contents of a tar file.
-Looks for a \"foo-pkg.el\" file in the tar file which must
-contain a package definition."
-  (let ((default-directory (file-name-directory file))
-        (file (file-name-nondirectory file)))
-    (unless (string-match (concat "\\`" package-subdirectory-regexp "\\.tar\\'")
-                          file)
-      (error "Invalid package name `%s'" file))
-    (let* ((pkg-name (match-string-no-properties 1 file))
-           (pkg-version (match-string-no-properties 2 file))
-           ;; Extract the package descriptor.
-           (pkg-def-contents (shell-command-to-string
-                              ;; Requires GNU tar.
-                              (format "tar -xOf %s %s-%s/%s-pkg.el"
-                                      file pkg-name pkg-version pkg-name)))
-           (pkg-def-parsed (package-read-from-string pkg-def-contents)))
-      (unless (eq (car pkg-def-parsed) 'define-package)
-        (error "No `define-package' sexp is present in `%s-pkg.el'" pkg-name))
-
-      (let ((pkg-desc (apply #'package-desc-from-define
-                             (append (cdr pkg-def-parsed) '(:kind tar)))))
-        (unless (equal (package-version-join (package-desc-version pkg-desc))
-                       pkg-version)
-          (error "Package has inconsistent versions"))
-        (unless (equal (symbol-name (package-desc-name pkg-desc))
-                       pkg-name)
-          (error "Package has inconsistent names"))
-
-        pkg-desc))))
-
 ;;;###autoload
 (defun package-install-file (file)
   "Install a package from a file.
