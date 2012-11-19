@@ -130,7 +130,7 @@ DIR must not have a trailing slash."
 	 (default-directory (expand-file-name dir)))
     (package-test-install-texinfo (concat pkg-name ".texi"))
     (setq default-directory (file-name-directory default-directory))
-    (call-process "tar" nil nil nil "-caf" tar-name pkg-dirname)))
+    (call-process "tar" nil nil nil "caf" tar-name pkg-dirname)))
 
 (defun package-test-suffix-matches (base suffix-list)
   "Return file names matching BASE concatenated with each item in SUFFIX-LIST"
