@@ -708,9 +708,7 @@ Optional argument MUSTBENEW is the same as `write-region'."
   "Install a downloaded tar package DESC.
 The file must already have been downloaded to the current
 directory, which should be a temporary directory."
-  (let* ((proc (start-process "package-untar" nil "tar"
-                              "xaf"
-                              file-name))
+  (let* ((proc (call-process "tar" nil nil nil "xaf" file-name))
          (pkg-dir (file-name-sans-extension file-name))
          (pkg-def-file (expand-file-name
                         (format "%s-pkg.el" (package-strip-version pkg-dir))
@@ -966,7 +964,10 @@ satisfied, i.e. that PKG-LIST is computed using
            (kind (package-desc-kind desc))
            (dl-dir (package-download-desc desc))
            (file-name (package-desc-filename desc))
-           (default-directory dl-dir))
+           (save-pwd default-directory))
+      ;; This needs to be `cd'. let-binding `default-directory'
+      ;; doesn't get picked up by `start-process'.
+      (cd dl-dir)
       (unwind-protect
           (cl-case kind
             ('tar (package-install-tar file-name))
@@ -976,7 +977,7 @@ satisfied, i.e. that PKG-LIST is computed using
                        (package-install-single)))
             (t
              (error "Unknown package kind: %s" kind)))
-
+        (cd save-pwd)
         (delete-directory dl-dir t))
 
       ;; If package A depends on package B, then A may `require' B
@@ -1057,7 +1058,7 @@ boundaries."
         (error
          "Package lacks a \"Version\" or \"Package-Version\" header"))
       (package-desc-from-define
-       file-name pkg-version summary requires :kind 'single))))
+       file-name pkg-version summary requires-str :kind 'single))))
 
 (defun package-tar-file-info (file)
   "Build a `package-desc' from the contents of a tar file.
@@ -1122,13 +1123,13 @@ similar to an entry in `package-alist'.  Save the cached copy to
   (let* ((dir (expand-file-name "archives" package-user-dir))
          (dir (expand-file-name (car archive) dir)))
     (package--with-work-buffer (cdr archive) file
-      ;; Read the retrieved buffer to make sure it is valid (e.g. it
-      ;; may fetch a URL redirect page).
-      (when (listp (read buffer))
-        (make-directory dir t)
-        (setq buffer-file-name (expand-file-name file dir))
-        (let ((version-control 'never))
-          (save-buffer))))))
+                               ;; Read the retrieved buffer to make sure it is valid (e.g. it
+                               ;; may fetch a URL redirect page).
+                               (when (listp (read buffer))
+                                 (make-directory dir t)
+                                 (setq buffer-file-name (expand-file-name file dir))
+                                 (let ((version-control 'never))
+                                   (save-buffer))))))
 
 ;;;###autoload
 (defun package-refresh-contents ()
@@ -1302,12 +1303,12 @@ If optional arg NO-ACTIVATE is non-nil, don't activate packages."
         (cond ((condition-case nil
                    (package--with-work-buffer (package-archive-base package)
                                               (format "%s-readme.txt" package-name)
-                     (setq buffer-file-name
-                           (expand-file-name readme package-user-dir))
-                     (let ((version-control 'never))
-                       (save-buffer))
-                     (setq readme-string (buffer-string))
-                     t)
+                                              (setq buffer-file-name
+                                                    (expand-file-name readme package-user-dir))
+                                              (let ((version-control 'never))
+                                                (save-buffer))
+                                              (setq readme-string (buffer-string))
+                                              t)
                  (error nil))
                (insert readme-string))
               ((file-readable-p readme)
