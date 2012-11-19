@@ -362,6 +362,17 @@ entry in VERSION-ALIST is (VERSION-LIST . PACKAGE-DESC).")
     (tar . "tar"))
   "An alist mapping archive kinds to the associated file suffix")
 
+(defmacro package-with-cd (dir &rest body)
+  "`cd' to DIR and run BODY there.
+This needs to be `cd'. let-binding `default-directory' doesn't
+get picked up by `start-process'."
+  (declare (indent 1))
+  `(let ((save-pwd ,default-directory))
+     (cd ,dir)
+     (unwind-protect
+         ,@body
+       (cd save-pwd))))
+
 (defun package-version-join (vlist)
   "Return the version string corresponding to the list VLIST.
 This is, approximately, the inverse of `version-to-list'.
@@ -397,11 +408,11 @@ E.g., if given \"quux-23.0\", will return \"quux\""
   (if (string-match (concat "\\`" package-subdirectory-regexp "\\'") dirname)
       (match-string 1 dirname)))
 
-(defun package-strip-name (dirname)
-  "Strip the name from a combined package name and version.
-E.g., if given \"quux-23.0\", will return \"23.0\""
-  (if (string-match (concat "\\`" package-subdirectory-regexp "\\'") dirname)
-      (match-string 2 dirname)))
+(defun package-version-from-filename (filename)
+  "Extract a version list from FILENAME."
+  (let ((name (file-name-nondirectory filename)))
+    (when (string-match (concat "\\`" package-subdirectory-regexp "\\'") name)
+      (version-to-list (match-string 2 name)))))
 
 (defun package-desc-archive-url (desc)
   "Return the archive URL of DESC."
@@ -473,14 +484,14 @@ PKG-DIR must be the directory name of the package, that is, \"name-version\"."
                              (buffer-string)))
          (pkg-def-parsed (package-read-from-string pkg-def-contents))
          (pkg-name (package-strip-version pkg-dir))
-         (pkg-version (package-strip-name pkg-dir))
+         (pkg-version (package-version-from-filename pkg-dir))
          desc)
     (unless (eq (car pkg-def-parsed) 'define-package)
       (error "No `define-package' sexp is present in `%s-%s.el'"
              pkg-name (package-version-join pkg-version)))
     (setq desc (apply #'package-desc-from-define
                       (append (cdr pkg-def-parsed))))
-    (unless (equal (package-version-join (package-desc-version desc))
+    (unless (equal (package-desc-version desc)
                    pkg-version)
       (error "Package has inconsistent versions"))
     (unless (equal (symbol-name (package-desc-name desc)) pkg-name)
@@ -760,10 +771,16 @@ Includes any dependencies."
 (defun package-download-desc (desc)
   "Download the package DESC to a temporary directory.
 Returns the temporary directory."
-  (let* ((dir (make-temp-file "package-work" t))
-         (filename (package-desc-filename desc)))
+  (package-download-file (package-desc-archive-url desc)
+                         (package-desc-filename desc)))
+
+(defun package-download-file (location filename)
+  "Download FILENAME to a temporary work directory.
+LOCATION is a directory (or URL) path and FILENAME is the
+non-directory name of the file to download."
+  (let* ((dir (make-temp-file "package-work" t)))
     (package--with-work-buffer
-     (package-desc-archive-url desc) filename
+     location filename
      (package--write-file-no-coding (expand-file-name filename dir) 'excl))
     dir))
 
@@ -1100,9 +1117,20 @@ The file can either be a tar file or an Emacs Lisp file."
     (insert-file-contents-literally file)
     (cond
      ((string-match "\\.el$" file)
-      (package-install-from-buffer (package-buffer-info)))
+      (package-install-single))
      ((string-match "\\.tar$" file)
-      (package-install-from-buffer (package-tar-file-info file)))
+      (let* ((pkg-dir (file-name-directory file))
+             (dl-dir (package-download-file pkg-dir
+                                            (file-name-nondirectory file)))
+             (pkg-name-version (file-name-directory file)))
+
+        (unwind-protect
+            (package-with-cd dl-dir
+              (package-install-tar file))
+          (delete-directory dl-dir t))
+        (package-activate (intern (package-strip-version file))
+                          (package-version-from-filename
+                           (file-name-sans-extension file)))))
      (t (error "Unrecognized extension `%s'" (file-name-extension file))))))
 
 (defun package-delete (name version)
