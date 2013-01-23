@@ -376,8 +376,8 @@ REQUIREMENTS should be a string like ((dep-name \"1.2.3\"))."
     (if (stringp requirements)
         (setq sexp (package-read-from-string requirements))
       (setq sexp requirements))
-    (mapcar '(lambda (elt) (list (car elt)
-                                 (version-to-list (cadr elt))))
+    (mapcar #'(lambda (elt) (list (car elt)
+                                  (version-to-list (cadr elt))))
             sexp)))
 
 (defun package-version-join (vlist)
@@ -478,9 +478,9 @@ NAME must be a symbol."
            (package-desc-summary desc)
            ;; Turn version lists into string form.
            (mapcar
-            (lambda (elt)
-              (list (car elt)
-                    (package-version-join (cadr elt))))
+            #'(lambda (elt)
+                (list (car elt)
+                      (package-version-join (cadr elt))))
             (package-desc-reqs desc))))))
 
 (defun package-read-defined (file-name pkg-dir)
@@ -1005,9 +1005,9 @@ archive in `package-archives'.  Interactively, prompt for NAME."
        (package-refresh-contents))
      (list (intern (completing-read
                     "Install package: "
-                    (mapcar (lambda (elt)
-                              (cons (symbol-name (car elt))
-                                    nil))
+                    (mapcar #'(lambda (elt)
+                                (cons (symbol-name (car elt))
+                                      nil))
                             package-archive-contents)
                     nil t)))))
   (let ((pkg-desc (assq name package-archive-contents)))
