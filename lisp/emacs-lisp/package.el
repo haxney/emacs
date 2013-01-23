@@ -367,7 +367,7 @@ entry in VERSION-ALIST is (VERSION-LIST . PACKAGE-DESC).")
 This needs to be `cd'. let-binding `default-directory' doesn't
 get picked up by `start-process'."
   (declare (indent 1))
-  `(let ((save-pwd ,default-directory))
+  `(let ((save-pwd default-directory))
      (cd ,dir)
      (unwind-protect
          ,@body
