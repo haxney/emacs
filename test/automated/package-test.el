@@ -68,14 +68,16 @@
 (cl-defmacro with-package-test ((&optional &key file basedir build-dir install) &rest body)
   "Set up temporary locations and variables for testing."
   (declare (indent 1))
-  `(let ((package-user-dir package-test-user-dir)
-         (package-archives `(("gnu" . ,package-test-dir)))
-         (old-yes-no-defn (symbol-function 'yes-or-no-p))
-         (old-pwd default-directory)
-         package--initialized
-         ,@(if build-dir (list (list 'build-dir build-dir)
-                               (list 'build-tar (concat build-dir ".tar")))
-             (list (cl-gensym)))) ;; Dummy value so `let' doesn't try to bind `nil'
+  `(let* ((package-test-user-dir (make-temp-name (concat temporary-file-directory
+                                                         "pkg-test-user-dir-")))
+          (package-user-dir package-test-user-dir)
+          (package-archives `(("gnu" . ,package-test-dir)))
+          (old-yes-no-defn (symbol-function 'yes-or-no-p))
+          (old-pwd default-directory)
+          package--initialized
+          ,@(if build-dir (list (list 'build-dir build-dir)
+                                (list 'build-tar (concat build-dir ".tar")))
+              (list (cl-gensym)))) ;; Dummy value so `let' doesn't try to bind `nil'
      (unwind-protect
          (progn
            ,(if basedir (list 'cd basedir))
@@ -221,31 +223,32 @@ Must called from within a `tar-mode' buffer."
 
 (ert-deftest package-test-install-multifile ()
   "Check properties of the installed multi-file package."
-  (let ((autoload-file
-         (expand-file-name "multi-file-autoloads.el"
-                           (expand-file-name
-                            "multi-file-0.2.3"
-                            package-test-user-dir)))
-        (installed-files '("dir" "multi-file.info" "multi-file-sub.elc"
-                           "multi-file-autoloads.el" "multi-file.elc"))
-        (autoload-forms '("^(defvar multi-file-custom-var"
-                          "^(custom-autoload 'multi-file-custom-var"
-                          "^(autoload 'multi-file-mode"
-                          "^(provide 'multi-file-autoloads)"))
-        (pkg-dir (file-name-as-directory
-                  (expand-file-name
-                   "multi-file-0.2.3"
-                   package-test-user-dir))))
-    (with-package-test (:basedir "data/package" :build-dir "multi-file-0.2.3"
-                                 :install '(multi-file)
-                                 :file autoload-file)
-      (package-initialize)
-      (should (package-installed-p 'multi-file))
-      (dolist (fn installed-files)
-        (should (file-exists-p (expand-file-name fn pkg-dir))))
-      (dolist (re autoload-forms)
-        (goto-char (point-min))
-        (should (re-search-forward re nil t))))))
+  (with-package-test (:basedir "data/package" :build-dir "multi-file-0.2.3"
+                               :install '(multi-file))
+    (let ((autoload-file
+           (expand-file-name "multi-file-autoloads.el"
+                             (expand-file-name
+                              "multi-file-0.2.3"
+                              package-test-user-dir)))
+          (installed-files '("dir" "multi-file.info" "multi-file-sub.elc"
+                             "multi-file-autoloads.el" "multi-file.elc"))
+          (autoload-forms '("^(defvar multi-file-custom-var"
+                            "^(custom-autoload 'multi-file-custom-var"
+                            "^(autoload 'multi-file-mode"
+                            "^(provide 'multi-file-autoloads)"))
+          (pkg-dir (file-name-as-directory
+                    (expand-file-name
+                     "multi-file-0.2.3"
+                     package-test-user-dir))))
+     (package-initialize)
+     (should (package-installed-p 'multi-file))
+     (with-temp-buffer
+       (insert-file-contents-literally autoload-file)
+       (dolist (fn installed-files)
+         (should (file-exists-p (expand-file-name fn pkg-dir))))
+       (dolist (re autoload-forms)
+         (goto-char (point-min))
+         (should (re-search-forward re nil t)))))))
 
 (ert-deftest package-test-update-listing ()
   "Ensure installed package status is updated."
