@@ -1010,6 +1010,8 @@ archive in `package-archives'.  Interactively, prompt for NAME."
                                       nil))
                             package-archive-contents)
                     nil t)))))
+  (unless package--initialized
+    (package-initialize t))
   (let ((pkg-desc (assq name package-archive-contents)))
     (unless pkg-desc
       (error "Package `%s' is not available for installation"
