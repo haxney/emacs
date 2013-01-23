@@ -290,11 +290,7 @@ contrast, `package-user-dir' contains packages for personal use."
                              &key kind archive
                              &aux (name (intern name-string))
                              (version (ignore-errors (version-to-list version-string)))
-                             (reqs (mapcar
-                                    (lambda (elt)
-                                      (list (car elt)
-                                            (version-to-list (cadr elt))))
-                                    requirements)))))
+                             (reqs (ignore-errors (package-parse-requires-header requirements))))))
               "Structure containing information about an individual package.
 
 Slots:
@@ -372,6 +368,17 @@ get picked up by `start-process'."
      (unwind-protect
          ,@body
        (cd save-pwd))))
+
+(defun package-parse-requires-header (requirements)
+  "Parse a \"Package-Requires:\" header into version lists.
+REQUIREMENTS should be a string like ((dep-name \"1.2.3\"))."
+  (let (sexp)
+    (if (stringp requirements)
+        (setq sexp (package-read-from-string requirements))
+      (setq sexp requirements))
+    (mapcar '(lambda (elt) (list (car elt)
+                                 (version-to-list (cadr elt))))
+            sexp)))
 
 (defun package-version-join (vlist)
   "Return the version string corresponding to the list VLIST.
@@ -1064,7 +1071,6 @@ boundaries."
     (require 'lisp-mnt)
     ;; Use some headers we've invented to drive the process.
     (let* ((requires-str (lm-header "package-requires"))
-           (requires (if requires-str (package-read-from-string requires-str)))
            ;; Prefer Package-Version; if defined, the package author
            ;; probably wants us to use it.  Otherwise try Version.
            (pkg-version
