@@ -671,25 +671,6 @@ Required package `%s-%s' is unavailable"
       (push (cons name (list (cons pkg-version pkg-desc)))
             package-obsolete-alist))))
 
-;; From Emacs 22.
-(defun package-autoload-ensure-default-file (file)
-  "Make sure that the autoload file FILE exists and if not create it."
-  (unless (file-exists-p file)
-    (write-region
-     (concat ";;; " (file-name-nondirectory file)
-             " --- automatically extracted autoloads\n"
-             ";;\n"
-             ";;; Code:\n\n"
-             "\n;; Local Variables:\n"
-             ";; version-control: never\n"
-             ";; no-byte-compile: t\n"
-             ";; no-update-autoloads: t\n"
-             ";; End:\n"
-             ";;; " (file-name-nondirectory file)
-             " ends here\n")
-     nil file))
-  file)
-
 (defun package-generate-autoloads (desc)
   "Generate autoloads for package DESC."
   (require 'autoload)         ;; Load before we let-bind generated-autoload-file!
@@ -697,8 +678,6 @@ Required package `%s-%s' is unavailable"
          (pkg-dir (package-desc-install-dir desc))
          (generated-autoload-file (expand-file-name auto-name pkg-dir))
          (version-control 'never))
-    (unless (fboundp 'autoload-ensure-default-file)
-      (package-autoload-ensure-default-file generated-autoload-file))
     (update-directory-autoloads pkg-dir)
     (let ((buf (find-buffer-visiting generated-autoload-file)))
       (when buf (kill-buffer buf)))))
