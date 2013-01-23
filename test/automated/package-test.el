@@ -40,15 +40,20 @@
   "Save the old value of `package-user-dir' to be restored later.")
 
 (defvar package-test-user-dir (make-temp-name
-			       (concat temporary-file-directory "pkg-test-user-dir-"))
+                               (concat temporary-file-directory "pkg-test-user-dir-"))
   "Directory to use for installing packages during testing.")
 
 (setq package-user-dir package-test-user-dir)
 
 (defvar simple-single-desc [cl-struct-package-desc simple-single (1 3)
-						   "A single-file package with no dependencies"
-						   nil single nil]
+                                                   "A single-file package with no dependencies"
+                                                   nil single nil]
   "Expected `package-desc' parsed from simple-single-1.3.el.")
+
+(defvar simple-depend-desc [cl-struct-package-desc simple-depend (1 0)
+                                                   "A single-file package with a dependency."
+                                                   ((simple-single (1 3))) single nil]
+  "Expected `package-desc' parsed from simple-depend-1.0.el.")
 
 (defvar package-test-dir (expand-file-name "data/package" (file-name-directory load-file-name))
   "Base directory of package test files.")
@@ -64,35 +69,37 @@
   "Set up temporary locations and variables for testing."
   (declare (indent 1))
   `(let ((package-user-dir package-test-user-dir)
-	 (package-archives `(("gnu" . ,package-test-dir)))
-	 (old-yes-no-defn (symbol-function 'yes-or-no-p))
-	 ,@(if build-dir (list (list 'build-dir build-dir)
-			       (list 'build-tar (concat build-dir ".tar")))
-	     (list (cl-gensym)))) ;; Dummy value so `let' doesn't try to bind `nil'
+         (package-archives `(("gnu" . ,package-test-dir)))
+         (old-yes-no-defn (symbol-function 'yes-or-no-p))
+         (old-pwd default-directory)
+         ,@(if build-dir (list (list 'build-dir build-dir)
+                               (list 'build-tar (concat build-dir ".tar")))
+             (list (cl-gensym)))) ;; Dummy value so `let' doesn't try to bind `nil'
      (unwind-protect
-	 (progn
-	   ,(if basedir (list 'cd basedir))
-	   (setf (symbol-function 'yes-or-no-p) #'ignore)
-	   (unless (file-directory-p package-user-dir)
-	     (mkdir package-user-dir))
-	   (if (boundp 'build-dir)
-	       (package-test-build-multifile build-dir))
-	   ,@(when install
-	       (list
-		(list 'package-refresh-contents)
-		;; The two quotes before `package-install' are required! One is
-		;; consumed by the macro expansion and the other prevents trying to
-		;; take the `symbol-value' of `package-install'
-		(list 'mapc ''package-install install)))
-	   (with-temp-buffer
-	     ,(if file
-		  (list 'insert-file-contents file))
-	     ,@body))
+         (progn
+           ,(if basedir (list 'cd basedir))
+           (setf (symbol-function 'yes-or-no-p) #'ignore)
+           (unless (file-directory-p package-user-dir)
+             (mkdir package-user-dir))
+           (if (boundp 'build-dir)
+               (package-test-build-multifile build-dir))
+           ,@(when install
+               (list
+                (list 'package-refresh-contents)
+                ;; The two quotes before `package-install' are required! One is
+                ;; consumed by the macro expansion and the other prevents trying to
+                ;; take the `symbol-value' of `package-install'
+                (list 'mapc ''package-install install)))
+           (with-temp-buffer
+             ,(if file
+                  (list 'insert-file-contents file))
+             ,@body))
        ,(if build-dir
-	    (list 'package-test-cleanup-built-files build-dir))
+            (list 'package-test-cleanup-built-files build-dir))
        (when (file-directory-p package-test-user-dir)
-	 (delete-directory package-test-user-dir t))
-       (setf (symbol-function 'yes-or-no-p) old-yes-no-defn))))
+         (delete-directory package-test-user-dir t))
+       (setf (symbol-function 'yes-or-no-p) old-yes-no-defn)
+       ,(if basedir (list 'cd 'old-pwd)))))
 
 (defun package-test-install-texinfo (file)
   "Install from texinfo FILE.
@@ -101,33 +108,33 @@ FILE should be a .texinfo file relative to the current
 `default-directory'"
   (require 'info)
   (let* ((full-file (expand-file-name file))
-	 (info-file (replace-regexp-in-string "\\.texi\\'" ".info" full-file))
-	 (old-info-defn (symbol-function 'Info-revert-find-node)))
+         (info-file (replace-regexp-in-string "\\.texi\\'" ".info" full-file))
+         (old-info-defn (symbol-function 'Info-revert-find-node)))
     (require 'info)
     (setf (symbol-function 'Info-revert-find-node) #'ignore)
     (with-current-buffer (find-file-literally full-file)
       (unwind-protect
-	  (progn
-	    (require 'makeinfo)
-	    (makeinfo-buffer)
-	    ;; Give `makeinfo-buffer' a chance to finish
-	    (while compilation-in-progress
-	      (sit-for 0.1))
-	    (call-process "ginstall-info" nil nil nil
-			  (format "--info-dir=%s" default-directory)
-			  (format "%s" info-file)))
-	(kill-buffer)
-	(setf (symbol-function 'Info-revert-find-node) old-info-defn)))))
+          (progn
+            (require 'makeinfo)
+            (makeinfo-buffer)
+            ;; Give `makeinfo-buffer' a chance to finish
+            (while compilation-in-progress
+              (sit-for 0.1))
+            (call-process "ginstall-info" nil nil nil
+                          (format "--info-dir=%s" default-directory)
+                          (format "%s" info-file)))
+        (kill-buffer)
+        (setf (symbol-function 'Info-revert-find-node) old-info-defn)))))
 
 (defun package-test-build-multifile (dir)
   "Build a tar package from a multiple-file directory DIR.
 
 DIR must not have a trailing slash."
   (let* ((pkg-dirname (file-name-nondirectory dir))
-	 (pkg-name (package-strip-version pkg-dirname))
-	 (pkg-version (match-string-no-properties 2 pkg-dirname))
-	 (tar-name (concat pkg-dirname ".tar"))
-	 (default-directory (expand-file-name dir)))
+         (pkg-name (package-strip-version pkg-dirname))
+         (pkg-version (match-string-no-properties 2 pkg-dirname))
+         (tar-name (concat pkg-dirname ".tar"))
+         (default-directory (expand-file-name dir)))
     (package-test-install-texinfo (concat pkg-name ".texi"))
     (setq default-directory (file-name-directory default-directory))
     (call-process "tar" nil nil nil "caf" tar-name pkg-dirname)))
@@ -153,27 +160,29 @@ Must called from within a `tar-mode' buffer."
   (cl-dolist (header tar-parse-info)
     (let ((tar-name (tar-header-name header)))
       (when (string= tar-name filename)
-	(cl-return t)))))
+        (cl-return t)))))
 
 (ert-deftest package-test-buffer-info ()
   "Parse an elisp buffer to get a `package-desc' object."
   (with-package-test (:basedir "data/package" :file "simple-single-1.3.el")
-    (should (equal (package-buffer-info) simple-single-desc))))
+    (should (equal (package-buffer-info) simple-single-desc)))
+  (with-package-test (:basedir "data/package" :file "simple-depend-1.0.el")
+    (should (equal (package-buffer-info) simple-depend-desc))))
 
 (ert-deftest package-test-install-single ()
   "Install a single file without using an archive."
   (with-package-test (:basedir "data/package" :file "simple-single-1.3.el")
     (should (package-install-single))
     (let* ((simple-pkg-dir (file-name-as-directory
-			    (expand-file-name
-			     "simple-single-1.3"
-			     package-test-user-dir)))
-	   (autoloads-file (expand-file-name "simple-single-autoloads.el" simple-pkg-dir)))
+                            (expand-file-name
+                             "simple-single-1.3"
+                             package-test-user-dir)))
+           (autoloads-file (expand-file-name "simple-single-autoloads.el" simple-pkg-dir)))
       (should (file-directory-p simple-pkg-dir))
       (with-temp-buffer
-	(insert-file-contents (expand-file-name "simple-single-pkg.el" simple-pkg-dir))
-	(should (string= (buffer-string)
-			 "(define-package \"simple-single\" \"1.3\" \"A single-file package with no dependencies\" nil)\n")))
+        (insert-file-contents (expand-file-name "simple-single-pkg.el" simple-pkg-dir))
+        (should (string= (buffer-string)
+                         "(define-package \"simple-single\" \"1.3\" \"A single-file package with no dependencies\" nil)\n")))
       (should (file-exists-p autoloads-file))
       (should-not (get-file-buffer autoloads-file)))))
 
@@ -193,41 +202,41 @@ Must called from within a `tar-mode' buffer."
   (with-package-test (:basedir "data/package" :build-dir "multi-file-0.2.3")
     (should (file-exists-p build-tar))
     (let ((suffixes
-	   (remove build-tar (package-test-suffix-matches
-			      build-dir
-			      package-test-built-file-suffixes))))
+           (remove build-tar (package-test-suffix-matches
+                              build-dir
+                              package-test-built-file-suffixes))))
       (with-current-buffer (find-file build-tar)
-	(dolist (file suffixes)
-	  (should (package-test-search-tar-file file)))
-	(kill-buffer)))))
+        (dolist (file suffixes)
+          (should (package-test-search-tar-file file)))
+        (kill-buffer)))))
 
 (ert-deftest package-test-install-multifile ()
   "Check properties of the installed multi-file package."
   (let ((autoload-file
-	 (expand-file-name "multi-file-autoloads.el"
-			   (expand-file-name
-			    "multi-file-0.2.3"
-			    package-test-user-dir)))
-	(installed-files '("dir" "multi-file.info" "multi-file-sub.elc"
-			   "multi-file-autoloads.el" "multi-file.elc"))
-	(autoload-forms '("^(defvar multi-file-custom-var"
-			  "^(custom-autoload 'multi-file-custom-var"
-			  "^(autoload 'multi-file-mode"
-			  "^(provide 'multi-file-autoloads)"))
-	(pkg-dir (file-name-as-directory
-		  (expand-file-name
-		   "multi-file-0.2.3"
-		   package-test-user-dir))))
+         (expand-file-name "multi-file-autoloads.el"
+                           (expand-file-name
+                            "multi-file-0.2.3"
+                            package-test-user-dir)))
+        (installed-files '("dir" "multi-file.info" "multi-file-sub.elc"
+                           "multi-file-autoloads.el" "multi-file.elc"))
+        (autoload-forms '("^(defvar multi-file-custom-var"
+                          "^(custom-autoload 'multi-file-custom-var"
+                          "^(autoload 'multi-file-mode"
+                          "^(provide 'multi-file-autoloads)"))
+        (pkg-dir (file-name-as-directory
+                  (expand-file-name
+                   "multi-file-0.2.3"
+                   package-test-user-dir))))
     (with-package-test (:basedir "data/package" :build-dir "multi-file-0.2.3"
-				 :install '(multi-file)
-				 :file autoload-file)
+                                 :install '(multi-file)
+                                 :file autoload-file)
       (package-initialize)
       (should (package-installed-p 'multi-file))
       (dolist (fn installed-files)
-	(should (file-exists-p (expand-file-name fn pkg-dir))))
+        (should (file-exists-p (expand-file-name fn pkg-dir))))
       (dolist (re autoload-forms)
-	(goto-char (point-min))
-	(should (re-search-forward re nil t))))))
+        (goto-char (point-min))
+        (should (re-search-forward re nil t))))))
 
 (ert-deftest package-test-update-listing ()
   "Ensure installed package status is updated."
