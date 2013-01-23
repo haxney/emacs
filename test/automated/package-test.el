@@ -99,7 +99,7 @@
        (when (file-directory-p package-test-user-dir)
          (delete-directory package-test-user-dir t))
        (setf (symbol-function 'yes-or-no-p) old-yes-no-defn)
-       ,(if basedir (list 'cd 'old-pwd)))))
+       (cd old-pwd))))
 
 (defun package-test-install-texinfo (file)
   "Install from texinfo FILE.
