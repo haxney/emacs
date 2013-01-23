@@ -72,6 +72,7 @@
          (package-archives `(("gnu" . ,package-test-dir)))
          (old-yes-no-defn (symbol-function 'yes-or-no-p))
          (old-pwd default-directory)
+         package--initialized
          ,@(if build-dir (list (list 'build-dir build-dir)
                                (list 'build-tar (concat build-dir ".tar")))
              (list (cl-gensym)))) ;; Dummy value so `let' doesn't try to bind `nil'
@@ -185,6 +186,14 @@ Must called from within a `tar-mode' buffer."
                          "(define-package \"simple-single\" \"1.3\" \"A single-file package with no dependencies\" nil)\n")))
       (should (file-exists-p autoloads-file))
       (should-not (get-file-buffer autoloads-file)))))
+
+(ert-deftest package-test-install-dependency ()
+  "Install a package which includes a dependency."
+  (with-package-test ()
+    (package-refresh-contents)
+    (package-install 'simple-depend)
+    (should (package-installed-p 'simple-single))
+    (should (package-installed-p 'simple-depend))))
 
 (ert-deftest package-test-refresh-contents ()
   "Parse an \"archive-contents\" file."
