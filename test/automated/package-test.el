@@ -45,17 +45,30 @@
 
 (setq package-user-dir package-test-user-dir)
 
+(defvar package-test-file-dir (file-name-directory load-file-name)
+  "Directory of the actual \"package-test.el\" file.")
+
 (defvar simple-single-desc [cl-struct-package-desc simple-single (1 3)
                                                    "A single-file package with no dependencies"
                                                    nil single nil]
   "Expected `package-desc' parsed from simple-single-1.3.el.")
+
+(defvar simple-single-desc-1-4 [cl-struct-package-desc simple-single (1 4)
+                                                       "A single-file package with no dependencies"
+                                                       nil single nil]
+  "Expected `package-desc' parsed from simple-single-1.4.el.")
 
 (defvar simple-depend-desc [cl-struct-package-desc simple-depend (1 0)
                                                    "A single-file package with a dependency."
                                                    ((simple-single (1 3))) single nil]
   "Expected `package-desc' parsed from simple-depend-1.0.el.")
 
-(defvar package-test-dir (expand-file-name "data/package" (file-name-directory load-file-name))
+(defvar new-pkg-desc [cl-struct-package-desc new-pkg (1 0)
+                                             "A package only seen after "updating" archive-contents"
+                                             nil single nil]
+  "Expected `package-desc' parsed from new-pkg-1.0.el.")
+
+(defvar package-test-dir (expand-file-name "data/package" package-test-file-dir)
   "Base directory of package test files.")
 
 (defvar package-test-fake-contents-file
@@ -68,8 +81,7 @@
 (cl-defmacro with-package-test ((&optional &key file basedir build-dir install) &rest body)
   "Set up temporary locations and variables for testing."
   (declare (indent 1))
-  `(let* ((package-test-user-dir (make-temp-name (concat temporary-file-directory
-                                                         "pkg-test-user-dir-")))
+  `(let* ((package-test-user-dir (make-temp-file "pkg-test-user-dir-" t))
           (package-user-dir package-test-user-dir)
           (package-archives `(("gnu" . ,package-test-dir)))
           (old-yes-no-defn (symbol-function 'yes-or-no-p))
@@ -81,7 +93,7 @@
      (unwind-protect
          (progn
            ,(if basedir (list 'cd basedir))
-           (setf (symbol-function 'yes-or-no-p) #'ignore)
+           (setf (symbol-function 'yes-or-no-p) #'(lambda (&rest r) t))
            (unless (file-directory-p package-user-dir)
              (mkdir package-user-dir))
            (if (boundp 'build-dir)
@@ -240,15 +252,15 @@ Must called from within a `tar-mode' buffer."
                     (expand-file-name
                      "multi-file-0.2.3"
                      package-test-user-dir))))
-     (package-initialize)
-     (should (package-installed-p 'multi-file))
-     (with-temp-buffer
-       (insert-file-contents-literally autoload-file)
-       (dolist (fn installed-files)
-         (should (file-exists-p (expand-file-name fn pkg-dir))))
-       (dolist (re autoload-forms)
-         (goto-char (point-min))
-         (should (re-search-forward re nil t)))))))
+      (package-initialize)
+      (should (package-installed-p 'multi-file))
+      (with-temp-buffer
+        (insert-file-contents-literally autoload-file)
+        (dolist (fn installed-files)
+          (should (file-exists-p (expand-file-name fn pkg-dir))))
+        (dolist (re autoload-forms)
+          (goto-char (point-min))
+          (should (re-search-forward re nil t)))))))
 
 (ert-deftest package-test-update-listing ()
   "Ensure installed package status is updated."
@@ -262,8 +274,35 @@ Must called from within a `tar-mode' buffer."
       (goto-char (point-min))
       (should (re-search-forward "^\\s-+simple-single\\s-+1.3\\s-+installed" nil t))
       (goto-char (point-min))
-      (should-not (re-search-forward "^\\s-+simple-single\\s-+1.3\\s-+available" nil t))
+      (should-not (re-search-forward "^\\s-+simple-single\\s-+1.3\\s-+\\(available\\|new\\)" nil t))
       (kill-buffer buf))))
+
+(ert-deftest package-test-update-archives ()
+  "Test updating package archives."
+  (with-package-test ()
+    (let ((buf (package-list-packages)))
+      (package-menu-refresh)
+      (search-forward-regexp "^ +simple-single")
+      (package-menu-mark-install)
+      (package-menu-execute)
+      (should (package-installed-p 'simple-single))
+      (let ((package-test-dir
+             (expand-file-name "data/package/newer-versions" package-test-file-dir)))
+        (setq package-archives `(("gnu" . ,package-test-dir)))
+        (package-menu-refresh)
+
+        ;; New version should be available and old version should be installed
+        (goto-char (point-min))
+        (should (re-search-forward "^\\s-+simple-single\\s-+1.4\\s-+new" nil t))
+        (should (re-search-forward "^\\s-+simple-single\\s-+1.3\\s-+installed" nil t))
+
+        (goto-char (point-min))
+        (should (re-search-forward "^\\s-+new-pkg\\s-+1.0\\s-+\\(available\\|new\\)" nil t))
+
+        (package-menu-mark-upgrades)
+        (package-menu-execute)
+        (package-menu-refresh)
+        (should (package-installed-p 'simple-single '(1 4)))))))
 
 (provide 'package-test)
 
