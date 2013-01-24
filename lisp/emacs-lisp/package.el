@@ -1661,12 +1661,10 @@ Optional argument NOQUERY non-nil means do not ask the user to confirm."
                 (package-delete (car elt) (cdr elt))
               (error (message (cadr err)))))
         (error "Aborted")))
-    ;; If we deleted anything, regenerate `package-alist'.  This is done
-    ;; automatically if we installed a package.
-    (and delete-list (null install-list)
-         (package-initialize))
     (if (or delete-list install-list)
-        (package-menu--generate t t)
+        (progn
+          (package-initialize)
+          (package-menu--generate t t))
       (message "No operations specified."))))
 
 (defun package-menu--version-predicate (A B)
