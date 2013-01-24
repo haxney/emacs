@@ -578,8 +578,8 @@ actually loading the package by calling`package-load-descriptor'."
 
 (defun package--dir (name version)
   "Return the directory where a package is installed, or nil if none.
-NAME is the package name as a symbol and VERSION is a string."
-  (let* ((subdir (format "%s-%s" name version))
+NAME is the package name as a symbol and VERSION is a version list."
+  (let* ((subdir (format "%s-%s" name (package-version-join version)))
          (dir-list (cons package-user-dir package-directory-list))
          pkg-dir)
     (while dir-list
@@ -592,11 +592,11 @@ NAME is the package name as a symbol and VERSION is a string."
 
 (defun package-activate-1 (pkg-desc)
   (let* ((name (package-desc-name pkg-desc))
-         (version-str (package-version-join (package-desc-version pkg-desc)))
-         (pkg-dir (package--dir name version-str)))
+         (version (package-desc-version pkg-desc))
+         (pkg-dir (package--dir name version)))
     (unless pkg-dir
       (error "Internal error: unable to find directory for `%s-%s'"
-             name version-str))
+             name (package-version-join version)))
     ;; Add info node.
     (when (file-exists-p (expand-file-name "dir" pkg-dir))
       ;; FIXME: not the friendliest, but simple.
@@ -1090,14 +1090,21 @@ The file can either be a tar file or an Emacs Lisp file."
      (t (error "Unrecognized extension `%s'" (file-name-extension file))))))
 
 (defun package-delete (name version)
-  (let ((dir (package--dir name version)))
-    (if (string-equal (file-name-directory dir) package-user-dir)
-        (progn
-          (delete-directory dir t t)
-          (message "Package `%s-%s' deleted." name version))
+  "Delete package NAME at VERSION.
+NAME must be a symbol and VERSION must be a version list."
+  (let ((dir (package--dir name version))
+        (version-str (package-version-join version)))
+    (cond
+     ((not (stringp dir))
+      (message "Package `%s-%s' already deleted." name version-str))
+     ((string-equal (file-name-directory dir)
+                    (file-name-as-directory package-user-dir))
+      (delete-directory dir t t)
+      (message "Package `%s-%s' deleted." name version-str))
+     (t
       ;; Don't delete "system" packages
       (error "Package `%s-%s' is a system package, not deleting"
-             name version))))
+             name version-str)))))
 
 (defun package--download-one-archive (archive file)
   "Retrieve an archive file FILE from ARCHIVE, and cache it.
@@ -1190,7 +1197,7 @@ If optional arg NO-ACTIVATE is non-nil, don't activate packages."
      ;; Loaded packages are in `package-alist'.
      ((setq desc (cdr (assq package package-alist)))
       (setq version (package-version-join (package-desc-version desc)))
-      (if (setq pkg-dir (package--dir package-name version))
+      (if (setq pkg-dir (package--dir package-name (package-desc-version desc)))
           (insert "an installed package.\n\n")
         ;; This normally does not happen.
         (insert "a deleted package.\n\n")))
@@ -1618,9 +1625,7 @@ Optional argument NOQUERY non-nil means do not ask the user to confirm."
           ;; This is the key (PACKAGE . VERSION-LIST).
           (setq id (tabulated-list-get-id))
           (cond ((eq cmd ?D)
-                 (push (cons (symbol-name (car id))
-                             (package-version-join (cdr id)))
-                       delete-list))
+                 (push id delete-list))
                 ((eq cmd ?I)
                  (push (car id) install-list))))
         (forward-line)))
@@ -1642,11 +1647,13 @@ Optional argument NOQUERY non-nil means do not ask the user to confirm."
             (if (= (length delete-list) 1)
                 (format "Delete package `%s-%s'? "
                         (caar delete-list)
-                        (cdr (car delete-list)))
+                        (package-version-join (cdar delete-list)))
               (format "Delete these %d packages (%s)? "
                       (length delete-list)
-                      (mapconcat (lambda (elt)
-                                   (format "%s-%s" (car elt) (cdr elt)))
+                      (mapconcat #'(lambda (elt)
+                                     (format "%s-%s"
+                                             (car elt)
+                                             (package-version-join (cdr elt))))
                                  delete-list
                                  ", ")))))
           (dolist (elt delete-list)
