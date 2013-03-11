@@ -496,22 +496,7 @@ string."
          (pkg-file (expand-file-name
                     (format "%s-pkg.el" name)
                     pkg-dir))
-         (pkg-def-contents (with-temp-buffer
-                             (insert-file-contents-literally pkg-file)
-                             (buffer-string)))
-         (pkg-def-parsed (package-read-from-string pkg-def-contents))
-         pkg-desc)
-
-    (unless (eq (car pkg-def-parsed) 'define-package)
-      (error "No `define-package' sexp is present in `%s-pkg.el'" name))
-
-    (setq pkg-desc (apply #'package-desc-from-define
-                          (append (cdr pkg-def-parsed) '(:kind tar))))
-    (unless (equal (package-version-join (package-desc-version pkg-desc))
-                   version)
-      (error "Package has inconsistent versions"))
-    (unless (eq (package-desc-name pkg-desc) name)
-      (error "Package has inconsistent names"))
+         (pkg-desc (package-read-defined pkg-file (format "%s-%s" name version))))
 
     (cond
      ;; If there's no old package, just add this to `package-alist'.
