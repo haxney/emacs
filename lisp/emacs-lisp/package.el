@@ -357,6 +357,11 @@ Each element of the list is (NAME . VERSION-ALIST), where each
 entry in VERSION-ALIST is (VERSION-LIST . PACKAGE-DESC).")
 (put 'package-obsolete-alist 'risky-local-variable t)
 
+(defconst package-kind-to-suffix-alist
+  '((single . "el")
+    (tar . "tar"))
+  "An alist mapping archive kinds to the associated file suffix")
+
 (defun package-version-join (vlist)
   "Return the version string corresponding to the list VLIST.
 This is, approximately, the inverse of `version-to-list'.
@@ -391,6 +396,96 @@ This is, approximately, the inverse of `version-to-list'.
 E.g., if given \"quux-23.0\", will return \"quux\""
   (if (string-match (concat "\\`" package-subdirectory-regexp "\\'") dirname)
       (match-string 1 dirname)))
+
+(defun package-strip-name (dirname)
+  "Strip the name from a combined package name and version.
+E.g., if given \"quux-23.0\", will return \"23.0\""
+  (if (string-match (concat "\\`" package-subdirectory-regexp "\\'") dirname)
+      (match-string 2 dirname)))
+
+(defun package-desc-archive-url (desc)
+  "Return the archive URL of DESC."
+  (let* ((archive (package-desc-archive desc))
+         (url (cdr-safe (assoc archive package-archives))))
+    (or url (error "No archive named '%s'" archive))))
+
+(defun package-desc-base-name (desc)
+  "Return the base name of DESC, without a suffix.
+This is of the form \"foo-1.2.3\"."
+  (format "%s-%s"
+          (package-desc-name desc)
+          (package-version-join (package-desc-version desc))))
+
+(defun package-desc-filename (desc)
+  "Return the non-directory file name of DESC.
+This includes a suffix and is of the form \"foo-1.2.3.el\" or
+\"bar-4.5.6.tar\" for single and multi-file archives,
+respectively."
+  (let* ((kind (package-desc-kind desc))
+         (suffix (cdr-safe
+                  (assoc kind package-kind-to-suffix-alist))))
+    (unless suffix (error "No suffix for package kind %s" kind))
+    (format "%s.%s" (package-desc-base-name desc) suffix)))
+
+(defun package-desc-url (desc)
+  "Return the URL from which to fetch DESC."
+  (let ((base-name (package-desc-filename desc))
+        (archive-url (package-desc-archive-url desc)))
+    (concat archive-url base-name)))
+
+(defun package-desc-install-dir (desc)
+  "Return the install directory of DESC."
+  (file-name-as-directory
+   (expand-file-name (package-desc-base-name desc)
+                     package-user-dir)))
+
+(defun package-desc-descriptor-file (desc)
+  "Return the full file name of the package descriptor for DESC.
+This is of the form \"/path/to/foo-1.2.3/foo-pkg.el\"."
+  (expand-file-name (format "%s-pkg.el" (package-desc-name desc))
+                    (package-desc-install-dir desc)))
+
+(defun package-archive-base (name)
+  "Return the archive URL containing the package NAME.
+NAME must be a symbol."
+  (package-desc-archive-url (cdr (assq name package-archive-contents))))
+
+(defun package-desc-to-string (desc)
+  "Return a string representation of package DESC."
+  (let (print-level print-length)
+    (prin1-to-string
+     (list 'define-package
+           (symbol-name (package-desc-name desc))
+           (package-version-join (package-desc-version desc))
+           (package-desc-summary desc)
+           ;; Turn version lists into string form.
+           (mapcar
+            (lambda (elt)
+              (list (car elt)
+                    (package-version-join (cadr elt))))
+            (package-desc-reqs desc))))))
+
+(defun package-read-defined (file-name pkg-dir)
+  "Read a `define-package' from FILE-NAME, a \"foo-pkg.el\" file.
+PKG-DIR must be the directory name of the package, that is, \"name-version\"."
+  (let* ((pkg-def-contents (with-temp-buffer
+                             (insert-file-contents-literally file-name)
+                             (buffer-string)))
+         (pkg-def-parsed (package-read-from-string pkg-def-contents))
+         (pkg-name (package-strip-version pkg-dir))
+         (pkg-version (package-strip-name pkg-dir))
+         desc)
+    (unless (eq (car pkg-def-parsed) 'define-package)
+      (error "No `define-package' sexp is present in `%s-%s.el'"
+             pkg-name (package-version-join pkg-version)))
+    (setq desc (apply #'package-desc-from-define
+                      (append (cdr pkg-def-parsed))))
+    (unless (equal (package-version-join (package-desc-version desc))
+                   pkg-version)
+      (error "Package has inconsistent versions"))
+    (unless (equal (symbol-name (package-desc-name desc)) pkg-name)
+      (error "Package has inconsistent names"))
+    desc))
 
 (defun package-load-descriptor (name version dir)
   "Load the description file in directory DIR for package NAME.
@@ -1081,12 +1176,6 @@ The file can either be a tar file or an Emacs Lisp file."
       ;; Don't delete "system" packages
       (error "Package `%s-%s' is a system package, not deleting"
              name version))))
-
-(defun package-archive-base (name)
-  "Return the archive containing the package NAME.
-NAME must be a symbol."
-  (let ((desc (cdr (assq name package-archive-contents))))
-    (cdr (assoc (package-desc-archive desc) package-archives))))
 
 (defun package--download-one-archive (archive file)
   "Retrieve an archive file FILE from ARCHIVE, and cache it.
