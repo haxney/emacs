@@ -698,7 +698,9 @@ Required package `%s-%s' is unavailable"
     (load pkg-autoloads nil t)
     (byte-recompile-directory pkg-dir 0 t)))
 
-(defun package--write-file-no-coding (file-name)
+(defun package--write-file-no-coding (file-name &optional mustbenew)
+  "Write the current buffer to FILE-NAME.
+Optional argument MUSTBENEW is the same as `write-region'."
   (let ((buffer-file-coding-system 'no-conversion))
     (write-region (point-min) (point-max) file-name nil nil nil mustbenew)))
 
