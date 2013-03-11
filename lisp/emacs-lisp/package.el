@@ -1106,9 +1106,7 @@ The file can either be a tar file or an Emacs Lisp file."
 
 (defun package-delete (name version)
   (let ((dir (package--dir name version)))
-    (if (string-equal (file-name-directory dir)
-                      (file-name-as-directory
-                       (expand-file-name package-user-dir)))
+    (if (string-equal (file-name-directory dir) package-user-dir)
         (progn
           (delete-directory dir t t)
           (message "Package `%s-%s' deleted." name version))
