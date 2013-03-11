@@ -163,7 +163,7 @@ Must called from within a `tar-mode' buffer."
 (ert-deftest package-test-install-single ()
   "Install a single file without using an archive."
   (with-package-test (:basedir "data/package" :file "simple-single-1.3.el")
-		     (should (package-install-from-buffer (package-buffer-info)))
+		     (should (package-install-single))
 		     (let* ((simple-pkg-dir (file-name-as-directory
 					     (expand-file-name
 					      "simple-single-1.3"
