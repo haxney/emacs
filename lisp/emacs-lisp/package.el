@@ -250,7 +250,7 @@ This is an alist mapping package names (symbols) to
 `package-desc' structures.")
 (put 'package-archive-contents 'risky-local-variable t)
 
-(defcustom package-user-dir (locate-user-emacs-file "elpa")
+(defcustom package-user-dir (file-name-as-directory (locate-user-emacs-file "elpa"))
   "Directory containing the user's Emacs Lisp packages.
 The directory name should be absolute.
 Apart from this directory, Emacs also looks for system-wide
