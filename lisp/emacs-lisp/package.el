@@ -672,9 +672,11 @@ Required package `%s-%s' is unavailable"
      nil file))
   file)
 
-(defun package-generate-autoloads (name pkg-dir)
-  (require 'autoload)         ;Load before we let-bind generated-autoload-file!
-  (let* ((auto-name (format "%s-autoloads.el" name))
+(defun package-generate-autoloads (desc)
+  "Generate autoloads for package DESC."
+  (require 'autoload)         ;; Load before we let-bind generated-autoload-file!
+  (let* ((auto-name (format "%s-autoloads.el" (package-desc-name desc)))
+         (pkg-dir (package-desc-install-dir desc))
          (generated-autoload-file (expand-file-name auto-name pkg-dir))
          (version-control 'never))
     (unless (fboundp 'autoload-ensure-default-file)
@@ -683,15 +685,17 @@ Required package `%s-%s' is unavailable"
     (let ((buf (find-buffer-visiting generated-autoload-file)))
       (when buf (kill-buffer buf)))))
 
-(defun package--make-autoloads-and-compile (name pkg-dir)
-  "Generate autoloads and do byte-compilation for package named NAME.
-NAME is the name of the file to compile as a symbol and PKG-DIR
-is the name of the package directory."
-  (package-generate-autoloads name pkg-dir)
-  (let ((load-path (cons pkg-dir load-path)))
+(defun package-make-autoloads-and-compile (desc)
+  "Generate autoloads and do byte-compilation for DESC."
+  (package-generate-autoloads desc)
+  (let* ((pkg-dir (package-desc-install-dir desc))
+         (load-path (cons pkg-dir load-path))
+         (pkg-autoloads (expand-file-name
+                         (format "%s-autoloads" (package-desc-name desc))
+                         pkg-dir)))
     ;; We must load the autoloads file before byte compiling, in
     ;; case there are magic cookies to set up non-trivial paths.
-    (load (expand-file-name (format "%s-autoloads" name) pkg-dir) nil t)
+    (load pkg-autoloads nil t)
     (byte-recompile-directory pkg-dir 0 t)))
 
 (defun package--write-file-no-coding (file-name)
