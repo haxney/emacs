@@ -787,11 +787,11 @@ Includes any dependencies."
 (defmacro package-with-downloaded-package (desc &rest body)
   "Downloads the package specified by DESC into the current buffer."
   (declare (indent 1))
-  `(package--with-work-buffer (package-desc-archive-url ,desc)
+  `(package-with-downloaded-file (package-desc-archive-url ,desc)
                               (package-desc-filename ,desc)
                               ,@body))
 
-(defmacro package--with-work-buffer (location file &rest body)
+(defmacro package-with-downloaded-file (location file &rest body)
   "Run BODY in a buffer containing the contents of FILE at LOCATION.
 LOCATION is the base location of a package archive, and should be
 one of the URLs (or file names) specified in `package-archives'.
@@ -1119,7 +1119,7 @@ similar to an entry in `package-alist'.  Save the cached copy to
 \"archives/NAME/archive-contents\" in `package-user-dir'."
   (let* ((dir (expand-file-name "archives" package-user-dir))
          (dir (expand-file-name (car archive) dir)))
-    (package--with-work-buffer (cdr archive) file
+    (package-with-downloaded-file (cdr archive) file
                                ;; Read the retrieved buffer to make sure it is valid (e.g. it
                                ;; may fetch a URL redirect page).
                                (when (listp (read buffer))
@@ -1298,7 +1298,7 @@ If optional arg NO-ACTIVATE is non-nil, don't activate packages."
         ;; For elpa packages, try downloading the commentary.  If that
         ;; fails, try an existing readme file in `package-user-dir'.
         (cond ((condition-case nil
-                   (package--with-work-buffer (package-archive-base package)
+                   (package-with-downloaded-file (package-archive-base package)
                                               (format "%s-readme.txt" package-name)
                                               (setq buffer-file-name
                                                     (expand-file-name readme package-user-dir))
