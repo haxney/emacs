@@ -732,28 +732,38 @@ Optional argument MUSTBENEW is the same as `write-region'."
   (let ((buffer-file-coding-system 'no-conversion))
     (write-region (point-min) (point-max) file-name nil nil nil mustbenew)))
 
-(defun package-install-tar (file-name)
-  "Install a downloaded tar package DESC.
-The file must already have been downloaded to the current
-directory, which should be a temporary directory."
-  (let* ((proc (call-process "tar" nil nil nil "xaf" file-name))
-         (pkg-dir (file-name-sans-extension file-name))
-         (pkg-def-file (expand-file-name
-                        (format "%s-pkg.el" (package-strip-version pkg-dir))
-                        pkg-dir))
-         (desc (package-read-defined pkg-def-file pkg-dir))
-         (extract-dir (expand-file-name (package-desc-base-name desc)
-                                        default-directory))
-         (target-dir (file-name-as-directory (expand-file-name
-                                              (package-desc-base-name desc)
-                                              package-user-dir)))
+(defun package-untar-buffer (dir)
+  "Untar the current buffer into DIR.
+This uses `tar-untar-buffer' from Tar mode."
+  (tar-mode)
+  ;; Make sure everything extracts into DIR.
+  (let ((regexp (concat "\\`" (regexp-quote (expand-file-name dir)) "/"))
+        (case-fold-search (memq system-type '(windows-nt ms-dos cygwin))))
+    (dolist (tar-data tar-parse-info)
+      (let ((name (expand-file-name (tar-header-name tar-data))))
+        (or (string-match regexp name)
+            ;; Tarballs created by some utilities don't list
+            ;; directories with a trailing slash (Bug#13136).
+            (and (string-equal dir name)
+                 (eq (tar-header-link-type tar-data) 5))
+            (error "Package does not untar cleanly into directory %s/" dir)))))
+  (tar-untar-buffer))
+
+(defun package-install-tar (&optional no-overwrite)
+  "Install a downloaded tar package from the current buffer.
+If there is already a package installed at the target directory,
+delete that directory unless NO-OVERWRITE is non-nil."
+  (tar-mode)
+  (let* ((desc (package-desc-from-tar))
+         (target-dir (expand-file-name (package-desc-base-name desc)
+                                       package-user-dir))
          (default-directory package-user-dir))
     ;; If there is already a package with the same base name, delete
     ;; it before continuing.
-    (when (file-exists-p target-dir)
+    (when (and (not no-overwrite)
+               (file-exists-p target-dir))
       (delete-directory target-dir t))
-    (copy-directory extract-dir package-user-dir)
-    (delete-directory extract-dir t)
+    (package-untar-buffer target-dir)
     (package-make-autoloads-and-compile desc)))
 
 (defun package-install-single (&optional ignore)
@@ -1011,25 +1021,8 @@ satisfied, i.e. that PKG-LIST is computed using
            ;; `package-load-list', download the held version.
            (hold (cadr (assq elt package-load-list)))
            (v-string (or (and (stringp hold) hold)
-                         (package-version-join (package-desc-version desc))))
-           (kind (package-desc-kind desc))
-           (dl-dir (package-download-desc desc))
-           (file-name (package-desc-filename desc))
-           (save-pwd default-directory))
-      ;; This needs to be `cd'. let-binding `default-directory'
-      ;; doesn't get picked up by `start-process'.
-      (cd dl-dir)
-      (unwind-protect
-          (cl-case kind
-            ('tar (package-install-tar file-name))
-            ('single (with-temp-buffer
-                       (insert-file-contents-literally
-                        (expand-file-name (package-desc-filename desc) dl-dir))
-                       (package-install-single)))
-            (t
-             (error "Unknown package kind: %s" kind)))
-        (cd save-pwd)
-        (delete-directory dl-dir t))
+                         (package-version-join (package-desc-version desc)))))
+      (package-install-desc desc)
 
       ;; If package A depends on package B, then A may `require' B
       ;; during byte compilation.  So we need to activate B before
@@ -1123,19 +1116,11 @@ The file can either be a tar file or an Emacs Lisp file."
      ((string-match "\\.el$" file)
       (package-install-single))
      ((string-match "\\.tar$" file)
-      (let* ((pkg-dir (file-name-directory file))
-             (dl-dir (package-download-file pkg-dir
-                                            (file-name-nondirectory file)))
-             (pkg-name-version (file-name-directory file)))
-
-        (unwind-protect
-            (package-with-cd dl-dir
-              (package-install-tar file))
-          (delete-directory dl-dir t))
-        (package-activate (intern (package-strip-version file))
-                          (package-version-from-filename
-                           (file-name-sans-extension file)))))
-     (t (error "Unrecognized extension `%s'" (file-name-extension file))))))
+      (package-install-tar))
+     (t (error "Unrecognized extension `%s'" (file-name-extension file))))
+    (package-activate (intern (package-strip-version file))
+                      (package-version-from-filename
+                       (file-name-sans-extension file)))))
 
 (defun package-delete (name version)
   "Delete package NAME at VERSION.
