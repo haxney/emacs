@@ -359,17 +359,6 @@ entry in VERSION-ALIST is (VERSION-LIST . PACKAGE-DESC).")
     (tar . "tar"))
   "An alist mapping archive kinds to the associated file suffix")
 
-(defmacro package-with-cd (dir &rest body)
-  "`cd' to DIR and run BODY there.
-This needs to be `cd'. let-binding `default-directory' doesn't
-get picked up by `start-process'."
-  (declare (indent 1))
-  `(let ((save-pwd default-directory))
-     (cd ,dir)
-     (unwind-protect
-         ,@body
-       (cd save-pwd))))
-
 (defun package-parse-requires-header (requirements)
   "Parse a \"Package-Requires:\" header into version lists.
 REQUIREMENTS should be a string like ((dep-name \"1.2.3\"))."
@@ -794,22 +783,6 @@ Includes any dependencies."
 
 ;;;###autoload
 (defalias 'package-install-from-buffer 'package-install-single)
-
-(defun package-download-desc (desc)
-  "Download the package DESC to a temporary directory.
-Returns the temporary directory."
-  (package-download-file (package-desc-archive-url desc)
-                         (package-desc-filename desc)))
-
-(defun package-download-file (location filename)
-  "Download FILENAME to a temporary work directory.
-LOCATION is a directory (or URL) path and FILENAME is the
-non-directory name of the file to download."
-  (let* ((dir (make-temp-file "package-work" t)))
-    (package--with-work-buffer
-     location filename
-     (package--write-file-no-coding (expand-file-name filename dir) 'excl))
-    dir))
 
 (defmacro package-with-downloaded-package (desc &rest body)
   "Downloads the package specified by DESC into the current buffer."
