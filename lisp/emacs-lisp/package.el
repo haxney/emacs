@@ -172,6 +172,7 @@
 (require 'cl-lib)
 
 (require 'tabulated-list)
+(require 'tar-mode)
 
 (defgroup package nil
   "Manager for Emacs Lisp packages."
@@ -482,6 +483,36 @@ NAME must be a symbol."
                 (list (car elt)
                       (package-version-join (cadr elt))))
             (package-desc-reqs desc))))))
+
+(defun package-desc-match-file-name (str)
+  "Return non-nil if STR is a valid package descriptor file name.
+Expects the string to be the package name  . The name must be of the
+form \"foo-1.2.3/foo-pkg.el\""
+  (and (string-match (concat "\\`" package-subdirectory-regexp) str)
+       (string= (format "%s/%s-pkg.el"
+                        (match-string 0 str)
+                        (match-string 1 str))
+                str)))
+
+(defun package-desc-from-tar ()
+  "Read the \"*-pkg.el\" file from the tar archive in the current buffer."
+  (unless (eq major-mode 'tar-mode)
+    (error "Not in `tar-mode' buffer."))
+  (let ((tar-data (cl-find-if #'package-desc-match-file-name
+                              tar-parse-info
+                              :key #'tar-header-name))
+        start end pkg-def-parsed)
+    (unless tar-data
+      (error "No package descriptor file found."))
+    (with-current-buffer
+        (if (tar-data-swapped-p) tar-data-buffer (current-buffer))
+      (setq start          (tar-header-data-start tar-data)
+            end            (+ start (tar-header-size tar-data))
+            pkg-def-parsed (package-read-from-string (buffer-substring-no-properties start end)))
+      (unless (eq (car pkg-def-parsed) 'define-package)
+        (error "No `define-package' sexp is present in `%s-%s.el'"
+               pkg-name (package-version-join pkg-version)))
+      (apply #'package-desc-from-define (append (cdr pkg-def-parsed))))))
 
 (defun package-read-defined (file-name pkg-dir)
   "Read a `define-package' from FILE-NAME, a \"foo-pkg.el\" file.
