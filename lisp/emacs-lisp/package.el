@@ -801,6 +801,13 @@ non-directory name of the file to download."
      (package--write-file-no-coding (expand-file-name filename dir) 'excl))
     dir))
 
+(defmacro package-with-downloaded-package (desc &rest body)
+  "Downloads the package specified by DESC into the current buffer."
+  (declare (indent 1))
+  `(package--with-work-buffer (package-desc-archive-url ,desc)
+                              (package-desc-filename ,desc)
+                              ,@body))
+
 (defmacro package--with-work-buffer (location file &rest body)
   "Run BODY in a buffer containing the contents of FILE at LOCATION.
 LOCATION is the base location of a package archive, and should be
@@ -981,6 +988,16 @@ Also, add the originating archive to the `package-desc' structure."
                  (cons entry
                        (delq existing-package
                              package-archive-contents)))))))
+
+(defun package-install-desc (desc)
+  "Install package described by DESC."
+  (let ((kind (package-desc-kind desc)))
+    (package-with-downloaded-package desc
+      (cl-case kind
+        ('tar (package-install-tar))
+        ('single (package-install-single))
+        (t
+         (error "Unknown package kind: %s" kind))))))
 
 (defun package-install-transaction (pkg-list)
   "Download and install all the packages in PKG-LIST.
