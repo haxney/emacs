@@ -170,7 +170,6 @@
 ;;; Code:
 
 (require 'cl-lib)
-
 (require 'tabulated-list)
 (require 'tar-mode)
 
@@ -596,8 +595,8 @@ the file whose contents should be returned.
 
 The current buffer in `tar-mode'."
   (let* ((header-data (cl-find-if name-matcher
-                              tar-parse-info
-                              :key #'tar-header-name))
+                                  tar-parse-info
+                                  :key #'tar-header-name))
          (start (tar-header-data-start header-data))
          (end   (+ start (tar-header-size header-data))))
     (with-current-buffer (if (tar-data-swapped-p) tar-data-buffer (current-buffer))
@@ -606,22 +605,22 @@ The current buffer in `tar-mode'."
 (defun package--strip-commentary (str)
   "Strip the extraneous characters from STR, a commentary string."
   (if str
-   (with-temp-buffer
-     (insert str)
-     (goto-char (point-min))
-     ;; Delete the ";;; Commentary" section header
-     (lm-commentary-start)
-     (delete-region (match-beginning 0)
-                    (match-end 0))
-     (while (re-search-forward "^;+ " nil t)
-       (replace-match ""))
+      (with-temp-buffer
+        (insert str)
+        (goto-char (point-min))
+        ;; Delete the ";;; Commentary" section header
+        (lm-commentary-start)
+        (delete-region (match-beginning 0)
+                       (match-end 0))
+        (while (re-search-forward "^;+ " nil t)
+          (replace-match ""))
 
-     (goto-char (point-min))
-     (re-search-forward "\\S-")
-     (delete-region (point-min) (match-beginning 0))
-     (delete-trailing-whitespace)
+        (goto-char (point-min))
+        (re-search-forward "\\S-")
+        (delete-region (point-min) (match-beginning 0))
+        (delete-trailing-whitespace)
 
-     (buffer-string))))
+        (buffer-string))))
 
 (defun package-desc-from-buffer ()
   "Return a `package-desc' for the package in the current buffer.
@@ -749,8 +748,8 @@ updates `package-alist' and `package--obsolete-alist'."
         (dolist (subdir (directory-files dir))
           (when (string-match regexp subdir)
             (package--maybe-load-descriptor (intern (match-string 1 subdir))
-                                           (match-string 2 subdir)
-                                           dir)))))))
+                                            (match-string 2 subdir)
+                                            dir)))))))
 
 (defun package--maybe-load-descriptor (name version dir)
   "Maybe load a specific package from directory DIR.
@@ -946,19 +945,19 @@ Includes any dependencies."
          (el-file (expand-file-name (format "%s.el" name) pkg-dir))
          (pkg-file (package-desc-descriptor-file desc)))
     ;; Special case "package". Should this still be supported?
-   (if (eq name 'package)
-       (package--write-file-no-coding
-        (expand-file-name (format "%s.el" name) package-user-dir))
-     (package--install-transaction transaction)
-     ;; If there is already a package with the same base name,
-     ;; delete it before continuing.
-     (when (file-exists-p pkg-dir)
-       (delete-directory pkg-dir t))
-     (make-directory pkg-dir t)
-     (package--write-file-no-coding el-file 'excl)
-     (with-temp-file pkg-file
-       (insert (package-desc-to-string desc) "\n"))
-     (package--make-autoloads-and-compile desc))))
+    (if (eq name 'package)
+        (package--write-file-no-coding
+         (expand-file-name (format "%s.el" name) package-user-dir))
+      (package--install-transaction transaction)
+      ;; If there is already a package with the same base name,
+      ;; delete it before continuing.
+      (when (file-exists-p pkg-dir)
+        (delete-directory pkg-dir t))
+      (make-directory pkg-dir t)
+      (package--write-file-no-coding el-file 'excl)
+      (with-temp-file pkg-file
+        (insert (package-desc-to-string desc) "\n"))
+      (package--make-autoloads-and-compile desc))))
 
 ;;;###autoload
 (defalias 'package-install-from-buffer 'package-install-single)
@@ -967,8 +966,8 @@ Includes any dependencies."
   "Downloads the package specified by DESC into the current buffer."
   (declare (indent 1))
   `(package--with-downloaded-file (package-desc-archive-url ,desc)
-                              (package-desc-filename ,desc)
-                              ,@body))
+                                  (package-desc-filename ,desc)
+                                  ,@body))
 
 (defmacro package--with-downloaded-file (location file &rest body)
   "Run BODY in a buffer containing the contents of FILE at LOCATION.
@@ -1021,13 +1020,13 @@ similar to an entry in `package-alist'.  Save the cached copy to
   (let* ((dir (expand-file-name "archives" package-user-dir))
          (dir (expand-file-name (car archive) dir)))
     (package--with-downloaded-file (cdr archive) file
-                                  ;; Read the retrieved buffer to make sure it is valid (e.g. it
-                                  ;; may fetch a URL redirect page).
-                                  (when (listp (read buffer))
-                                    (make-directory dir t)
-                                    (setq buffer-file-name (expand-file-name file dir))
-                                    (let ((version-control 'never))
-                                      (save-buffer))))))
+                                   ;; Read the retrieved buffer to make sure it is valid (e.g. it
+                                   ;; may fetch a URL redirect page).
+                                   (when (listp (read buffer))
+                                     (make-directory dir t)
+                                     (setq buffer-file-name (expand-file-name file dir))
+                                     (let ((version-control 'never))
+                                       (save-buffer))))))
 
 (defun package--read-archive-file (file)
   "Re-read archive file FILE, if it exists.
@@ -1137,19 +1136,19 @@ but version %s required"
             (push next-pkg package-list))
           (setq package-list
                 (package--compute-transaction package-list
-                                             (package-desc-reqs
-                                              pkg-desc)))))))
+                                              (package-desc-reqs
+                                               pkg-desc)))))))
   package-list)
 
 (defun package-install-desc (desc)
   "Install package described by DESC."
   (let ((kind (package-desc-kind desc)))
     (package--with-downloaded-package desc
-      (cl-case kind
-        ('tar (package-install-tar))
-        ('single (package-install-single))
-        (t
-         (error "Unknown package kind: %s" kind))))))
+                                      (cl-case kind
+                                        ('tar (package-install-tar))
+                                        ('single (package-install-single))
+                                        (t
+                                         (error "Unknown package kind: %s" kind))))))
 
 (defun package--install-transaction (pkg-list)
   "Download and install all the packages in PKG-LIST.
@@ -1170,7 +1169,7 @@ satisfied, i.e. that PKG-LIST is computed using
       ;; during byte compilation.  So we need to activate B before
       ;; unpacking A.
       (package--maybe-load-descriptor elt v-string
-                                     package-user-dir)
+                                      package-user-dir)
       (package--activate elt (version-to-list v-string)))))
 
 (defvar package-initialized nil)
@@ -1203,7 +1202,7 @@ archive in `package-archives'.  Interactively, prompt for NAME."
              (symbol-name name)))
     (package--install-transaction
      (package--compute-transaction (list name)
-                                  (package-desc-reqs (cdr pkg-desc))))))
+                                   (package-desc-reqs (cdr pkg-desc))))))
 
 ;;;###autoload
 (defun package-install-file (file)
@@ -1219,8 +1218,8 @@ The file can either be a tar file or an Emacs Lisp file."
       (package-install-tar))
      (t (error "Unrecognized extension `%s'" (file-name-extension file))))
     (package--activate (intern (package-strip-version file))
-                      (package-version-from-filename
-                       (file-name-sans-extension file)))))
+                       (package-version-from-filename
+                        (file-name-sans-extension file)))))
 
 (defun package-delete (name version)
   "Delete package NAME at VERSION.
@@ -1411,13 +1410,13 @@ If optional arg NO-ACTIVATE is non-nil, don't activate packages."
         ;; fails, try an existing readme file in `package-user-dir'.
         (cond ((condition-case nil
                    (package--with-downloaded-file (package-archive-base package)
-                                              (format package-readme-file-format package-name)
-                                              (setq buffer-file-name
-                                                    (expand-file-name readme package-user-dir))
-                                              (let ((version-control 'never))
-                                                (save-buffer))
-                                              (setq readme-string (buffer-string))
-                                              t)
+                                                  (format package-readme-file-format package-name)
+                                                  (setq buffer-file-name
+                                                        (expand-file-name readme package-user-dir))
+                                                  (let ((version-control 'never))
+                                                    (save-buffer))
+                                                  (setq readme-string (buffer-string))
+                                                  t)
                  (error nil))
                (insert readme-string))
               ((file-readable-p readme)
@@ -1751,10 +1750,10 @@ Optional argument NOQUERY non-nil means do not ask the user to confirm."
       (if (or
            noquery
            (yes-or-no-p
-           (if (= (length install-list) 1)
-               (format "Install package `%s'? " (car install-list))
-             (format "Install these %d packages (%s)? "
-                     (length install-list)
+            (if (= (length install-list) 1)
+                (format "Install package `%s'? " (car install-list))
+              (format "Install these %d packages (%s)? "
+                      (length install-list)
                       (mapconcat 'symbol-name install-list ", ")))))
           (mapc 'package-install install-list)))
     ;; Delete packages, prompting if necessary.
