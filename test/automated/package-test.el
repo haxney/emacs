@@ -36,14 +36,8 @@
 (require 'ert)
 (require 'cl-lib)
 
-(defvar package-test-original-user-dir package-user-dir
-  "Save the old value of `package-user-dir' to be restored later.")
-
-(defvar package-test-user-dir (make-temp-name
-                               (concat temporary-file-directory "pkg-test-user-dir-"))
+(defvar package-test-user-dir nil
   "Directory to use for installing packages during testing.")
-
-(setq package-user-dir package-test-user-dir)
 
 (defvar package-test-file-dir (file-name-directory load-file-name)
   "Directory of the actual \"package-test.el\" file.")
