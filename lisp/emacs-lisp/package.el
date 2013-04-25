@@ -292,7 +292,7 @@ contrast, `package-user-dir' contains packages for personal use."
                              &aux (name (intern name-string))
                              (version (version-to-list version-string))
                              (reqs (package-parse-requires-header requirements)))))
-              "Structure containing information about an individual package.
+  "Structure containing information about an individual package.
 
 Slots:
 
@@ -312,12 +312,12 @@ either `single' or `tar'.
 
 `archive' The name of the archive (as a string) whence this
 package came."
-              name
-              version
-              (summary "No description available.")
-              reqs
-              kind
-              archive)
+  name
+  version
+  (summary "No description available.")
+  reqs
+  kind
+  archive)
 
 ;; The value is precomputed in finder-inf.el, but don't load that
 ;; until it's needed (i.e. when `package-initialize' is called).
