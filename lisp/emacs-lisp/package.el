@@ -488,31 +488,68 @@ the form \"foo-1.2.3/foo-pkg.el\""
 This uses the internal function `tar-header-block-tokenize' from `tar-mode'"
   (let ((old-multibyte-val enable-multibyte-characters))
     (unwind-protect
-        (progn (set-buffer-multibyte nil)
-               (tar-header-magic
-                (tar-header-block-tokenize (point-min)
-                                           tar-file-name-coding-system)))
+        (condition-case err
+            (progn (set-buffer-multibyte nil)
+                   (tar-header-magic
+                    (tar-header-block-tokenize (point-min)
+                                               tar-file-name-coding-system)))
+          (error nil))
       (set-buffer-multibyte old-multibyte-val))))
 
-(defun package-desc-from-tar ()
-  "Read the \"*-pkg.el\" file from the tar archive in the current buffer."
-  (unless (eq major-mode 'tar-mode)
-    (error "Not in `tar-mode' buffer."))
-  (let ((tar-data (cl-find-if #'package-desc-match-file-name
-                              tar-parse-info
-                              :key #'tar-header-name))
-        start end pkg-def-parsed)
-    (unless tar-data
-      (error "No package descriptor file found."))
-    (with-current-buffer
-        (if (tar-data-swapped-p) tar-data-buffer (current-buffer))
-      (setq start          (tar-header-data-start tar-data)
-            end            (+ start (tar-header-size tar-data))
-            pkg-def-parsed (package-read-from-string (buffer-substring-no-properties start end)))
-      (unless (eq (car pkg-def-parsed) 'define-package)
-        (error "No `define-package' sexp is present in `%s-%s.el'"
-               pkg-name (package-version-join pkg-version)))
-      (apply #'package-desc-from-define (append (cdr pkg-def-parsed))))))
+(defun package-buffer-info ()
+  "Return a `package-desc' for the package in the current buffer.
+Handles both single files tar archives.
+
+If the buffer is a tar file but is not in `tar-mode', enter
+`tar-mode'.
+
+If the buffer does not contain a conforming package, signal an
+error.  If there is a package, narrow the buffer to the file's
+boundaries."
+  (when (package--buffer-tar-p)
+    (tar-mode))
+  (if (eq major-mode 'tar-mode)
+      (let ((tar-data (cl-find-if #'package-desc-match-file-name
+                                  tar-parse-info
+                                  :key #'tar-header-name))
+            start end pkg-def-parsed)
+        (unless tar-data
+          (error "No package descriptor file found."))
+        (with-current-buffer
+            (if (tar-data-swapped-p) tar-data-buffer (current-buffer))
+          (setq start          (tar-header-data-start tar-data)
+                end            (+ start (tar-header-size tar-data))
+                pkg-def-parsed (package-read-from-string (buffer-substring-no-properties start end)))
+          (unless (eq (car pkg-def-parsed) 'define-package)
+            (error "No `define-package' sexp is present in `%s-%s.el'"
+                   pkg-name (package-version-join pkg-version)))
+          (apply #'package-desc-from-define (append (cdr pkg-def-parsed)))))
+
+    (goto-char (point-min))
+    (unless (re-search-forward "^;;; \\([^ ]*\\)\\.el ---[ \t]*\\(.*?\\)[ \t]*\\(-\\*-.*-\\*-[ \t]*\\)?$" nil t)
+      (error "Packages lacks a file header"))
+    (let ((file-name (match-string-no-properties 1))
+          (summary   (match-string-no-properties 2))
+          (start     (line-beginning-position)))
+      (unless (search-forward (format ";;; %s.el ends here"  file-name))
+        (error "Package lacks a terminating comment"))
+      ;; Try to include a trailing newline.
+      (forward-line)
+      (narrow-to-region start (point))
+      (require 'lisp-mnt)
+      ;; Use some headers we've invented to drive the process.
+      (let* ((requires-str (lm-header "package-requires"))
+             ;; Prefer Package-Version; if defined, the package author
+             ;; probably wants us to use it.  Otherwise try Version.
+             (pkg-version
+              (or (package-strip-rcs-id (lm-header "package-version"))
+                  (package-strip-rcs-id (lm-header "version"))))
+             (commentary (lm-commentary)))
+        (unless pkg-version
+          (error
+           "Package lacks a \"Version\" or \"Package-Version\" header"))
+        (package-desc-from-define
+         file-name pkg-version summary requires-str :kind 'single)))))
 
 (defun package-read-defined (file-name pkg-dir)
   "Read a `define-package' from FILE-NAME, a \"foo-pkg.el\" file.
@@ -754,7 +791,7 @@ This uses `tar-untar-buffer' from Tar mode."
 If there is already a package installed at the target directory,
 delete that directory unless NO-OVERWRITE is non-nil."
   (tar-mode)
-  (let* ((desc (package-desc-from-tar))
+  (let* ((desc (package-buffer-info))
          (target-dir (expand-file-name (package-desc-base-name desc)
                                        package-user-dir))
          (default-directory package-user-dir))
@@ -1056,38 +1093,6 @@ Otherwise return nil."
         (if (version-to-list str)
             str)
       (error nil))))
-
-(defun package-buffer-info ()
-  "Return a `package-desc' for the package in the current buffer.
-
-If the buffer does not contain a conforming package, signal an
-error.  If there is a package, narrow the buffer to the file's
-boundaries."
-  (goto-char (point-min))
-  (unless (re-search-forward "^;;; \\([^ ]*\\)\\.el ---[ \t]*\\(.*?\\)[ \t]*\\(-\\*-.*-\\*-[ \t]*\\)?$" nil t)
-    (error "Packages lacks a file header"))
-  (let ((file-name (match-string-no-properties 1))
-        (summary   (match-string-no-properties 2))
-        (start     (line-beginning-position)))
-    (unless (search-forward (format ";;; %s.el ends here"  file-name))
-      (error "Package lacks a terminating comment"))
-    ;; Try to include a trailing newline.
-    (forward-line)
-    (narrow-to-region start (point))
-    (require 'lisp-mnt)
-    ;; Use some headers we've invented to drive the process.
-    (let* ((requires-str (lm-header "package-requires"))
-           ;; Prefer Package-Version; if defined, the package author
-           ;; probably wants us to use it.  Otherwise try Version.
-           (pkg-version
-            (or (package-strip-rcs-id (lm-header "package-version"))
-                (package-strip-rcs-id (lm-header "version"))))
-           (commentary (lm-commentary)))
-      (unless pkg-version
-        (error
-         "Package lacks a \"Version\" or \"Package-Version\" header"))
-      (package-desc-from-define
-       file-name pkg-version summary requires-str :kind 'single))))
 
 ;;;###autoload
 (defun package-install-file (file)
