@@ -64,7 +64,7 @@ Unlike `package-archives', you can't specify a HTTP URL."
   :group 'package-x
   :version "24.4")
 
-(define-obsolete-variable-alias 'package-x-archive-upload-base
+(define-obsolete-variable-alias 'package-archive-upload-base
   'package-x-archive-upload-base
   "24.4")
 
@@ -205,7 +205,7 @@ destination, prompt for one."
         (when commentary
           (write-region commentary nil
                         (expand-file-name
-                         (format "%-readme.txt" (package-desc-name desc))
+                         (format "%s-readme.txt" (package-desc-name desc))
                          package-x-archive-upload-base)))
 
         (write-region (point-min) (point-max)
