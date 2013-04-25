@@ -68,11 +68,11 @@
                                              nil single nil]
   "Expected `package-desc' parsed from new-pkg-1.0.el.")
 
-(defvar package-test-dir (expand-file-name "data/package" package-test-file-dir)
+(defvar package-test-data-dir (expand-file-name "data/package" package-test-file-dir)
   "Base directory of package test files.")
 
 (defvar package-test-fake-contents-file
-  (expand-file-name "archive-contents" package-test-dir)
+  (expand-file-name "archive-contents" package-test-data-dir)
   "Path to a static copy of \"archive-contents\".")
 
 (defvar package-test-built-file-suffixes '(".tar" "/dir" "/*.info")
@@ -83,7 +83,7 @@
   (declare (indent 1))
   `(let* ((package-test-user-dir (make-temp-file "pkg-test-user-dir-" t))
           (package-user-dir package-test-user-dir)
-          (package-archives `(("gnu" . ,package-test-dir)))
+          (package-archives `(("gnu" . ,package-test-data-dir)))
           (old-yes-no-defn (symbol-function 'yes-or-no-p))
           (old-pwd default-directory)
           package--initialized
@@ -286,9 +286,9 @@ Must called from within a `tar-mode' buffer."
       (package-menu-mark-install)
       (package-menu-execute)
       (should (package-installed-p 'simple-single))
-      (let ((package-test-dir
+      (let ((package-test-data-dir
              (expand-file-name "data/package/newer-versions" package-test-file-dir)))
-        (setq package-archives `(("gnu" . ,package-test-dir)))
+        (setq package-archives `(("gnu" . ,package-test-data-dir)))
         (package-menu-refresh)
 
         ;; New version should be available and old version should be installed
