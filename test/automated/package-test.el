@@ -48,23 +48,40 @@
 (defvar package-test-file-dir (file-name-directory load-file-name)
   "Directory of the actual \"package-test.el\" file.")
 
-(defvar simple-single-desc [cl-struct-package-desc simple-single (1 3)
-                                                   "A single-file package with no dependencies"
-                                                   nil single nil]
+(defvar simple-single-desc
+  `[cl-struct-package-desc simple-single (1 3)
+                           "A single-file package with no dependencies"
+                           nil single nil
+                           ,(concat
+                             ";;; Commentary:\n\n;; "
+                             "This package provides a minor mode to frobnicate "
+                             "and/or bifurcate\n;; any flanges you desire. "
+                             "To activate it, type \"C-M-r M-3 butterfly\"\n;; "
+                             "and all your dreams will come true.\n\n")]
   "Expected `package-desc' parsed from simple-single-1.3.el.")
 
-(defvar simple-single-desc-1-4 [cl-struct-package-desc simple-single (1 4)
-                                                       "A single-file package with no dependencies"
-                                                       nil single nil]
+(defvar simple-single-desc-1-4
+  `[cl-struct-package-desc simple-single (1 4)
+                           "A single-file package with no dependencies"
+                           nil single nil
+                           ,(concat
+                             ";;; Commentary:\n\n;; "
+                             "This package provides a minor mode to frobnicate "
+                             "and/or bifurcate\n;; any flanges you desire. "
+                             "To activate it, type \"C-M-r M-3 butterfly\"\n;; "
+                             "and all your dreams will come true.\n"
+                             ";;\n;; This is a new, updated version.\n\n")]
   "Expected `package-desc' parsed from simple-single-1.4.el.")
 
-(defvar simple-depend-desc [cl-struct-package-desc simple-depend (1 0)
-                                                   "A single-file package with a dependency."
-                                                   ((simple-single (1 3))) single nil]
+(defvar simple-depend-desc
+  [cl-struct-package-desc simple-depend (1 0)
+                          "A single-file package with a dependency."
+                          ((simple-single (1 3))) single nil
+                          ";;; Commentary:\n\n;; Depends on another package.\n\n"]
   "Expected `package-desc' parsed from simple-depend-1.0.el.")
 
 (defvar new-pkg-desc [cl-struct-package-desc new-pkg (1 0)
-                                             "A package only seen after "updating" archive-contents"
+                                             "A package only seen after \"updating\" archive-contents"
                                              nil single nil]
   "Expected `package-desc' parsed from new-pkg-1.0.el.")
 
