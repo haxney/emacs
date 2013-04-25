@@ -3,6 +3,7 @@
 ;; Copyright (C) 2007-2013 Free Software Foundation, Inc.
 
 ;; Author: Tom Tromey <tromey@redhat.com>
+;;         Daniel Hackney <dan@haxney.org>
 ;; Created: 10 Mar 2007
 ;; Version: 1.0
 ;; Keywords: tools
@@ -22,33 +23,24 @@
 ;; You should have received a copy of the GNU General Public License
 ;; along with GNU Emacs.  If not, see <http://www.gnu.org/licenses/>.
 
-;;; Change Log:
-
-;;  2 Apr 2007 - now using ChangeLog file
-;; 15 Mar 2007 - updated documentation
-;; 14 Mar 2007 - Changed how obsolete packages are handled
-;; 13 Mar 2007 - Wrote package-install-from-buffer
-;; 12 Mar 2007 - Wrote package-menu mode
-
 ;;; Commentary:
 
-;; The idea behind package.el is to be able to download packages and
-;; install them.  Packages are versioned and have versioned
-;; dependencies.  Furthermore, this supports built-in packages which
-;; may or may not be newer than user-specified packages.  This makes
-;; it possible to upgrade Emacs and automatically disable packages
-;; which have moved from external to core.  (Note though that we don't
-;; currently register any of these, so this feature does not actually
-;; work.)
+;; The idea behind package.el is to be able to download and install
+;; packages.  Packages are versioned and have versioned dependencies.
+;; Furthermore, this supports built-in packages which may or may not
+;; be newer than user-specified packages.  This makes it possible to
+;; upgrade Emacs and automatically disable packages which have moved
+;; from external to core.  (Note though that we don't currently
+;; register any of these, so this feature does not actually work.)
 
 ;; A package is described by its name and version.  The distribution
-;; format is either  a tar file or a single .el file.
+;; format is either a tar file or a single .el file.
 
 ;; A tar file should be named "NAME-VERSION.tar".  The tar file must
-;; unpack into a directory named after the package and version:
-;; "NAME-VERSION".  It must contain a file named "PACKAGE-pkg.el"
-;; which consists of a call to define-package.  It may also contain a
-;; "dir" file and the info files it references.
+;; unpack into a directory "NAME-VERSION".  It must contain a file
+;; named "PACKAGE-pkg.el" which consists of a call to
+;; `define-package'.  It may also contain a "dir" file and the info
+;; files it references.
 
 ;; A .el file is named "NAME-VERSION.el" in the remote archive, but is
 ;; installed as simply "NAME.el" in a directory named "NAME-VERSION".
@@ -58,22 +50,22 @@
 ;; added by customizing the `package-archives' alist.  Packages get
 ;; byte-compiled at install time.
 
-;; At activation time we will set up the load-path and the info path,
-;; and we will load the package's autoloads.  If a package's
-;; dependencies are not available, we will not activate that package.
+;; At activation time, package.el will add each package's directory to
+;; `load-path' and the info path and will load the package's
+;; autoloads.  If a package's dependencies are not available,
+;; package.el will not activate that package.
 
-;; Conceptually a package has multiple state transitions:
+;; Conceptually, a package has multiple state transitions:
 ;;
-;; * Download.  Fetching the package from ELPA.
+;; * Download.  Fetching the package from a package archive.
 ;; * Install.  Untar the package, or write the .el file, into
-;;   ~/.emacs.d/elpa/ directory.
-;; * Byte compile.  Currently this phase is done during install,
-;;   but we may change this.
+;;   ~/.emacs.d/elpa/.
+;; * Byte compile.
 ;; * Activate.  Evaluate the autoloads for the package to make it
 ;;   available to the user.
 ;; * Load.  Actually load the package and run some code from it.
 
-;; Other external functions you may want to use:
+;; The main commands to use are
 ;;
 ;; M-x list-packages
 ;;    Enters a mode similar to buffer-menu which lets you manage
@@ -82,7 +74,7 @@
 ;;    can see what packages are available.  This will automatically
 ;;    fetch the latest list of packages from ELPA.
 ;;
-;; M-x package-install-from-buffer
+;; M-x package-install-single
 ;;    Install a package consisting of a single .el file that appears
 ;;    in the current buffer.  This only works for packages which
 ;;    define a Version header properly; package.el also supports the
@@ -99,15 +91,16 @@
 ;;; Thanks:
 ;;; (sorted by sort-lines):
 
+;; Daniel Hackney <dan@haxney.org>
 ;; Jim Blandy <jimb@red-bean.com>
 ;; Karl Fogel <kfogel@red-bean.com>
 ;; Kevin Ryde <user42@zip.com.au>
 ;; Lawrence Mitchell
 ;; Michael Olson <mwolson@member.fsf.org>
+;; Phil Hagelberg <phil@hagelb.org>
 ;; Sebastian Tennant <sebyte@smolny.plus.com>
 ;; Stefan Monnier <monnier@iro.umontreal.ca>
 ;; Vinicius Jose Latorre <viniciusjl@ig.com.br>
-;; Phil Hagelberg <phil@hagelb.org>
 
 ;;; ToDo:
 
@@ -124,10 +117,8 @@
 ;; - give users a way to view a package's documentation when it
 ;;   only appears in the .el
 ;; - use/extend checkdoc so people can tell if their package will work
-;; - "installed" instead of a blank in the status column
 ;; - tramp needs its files to be compiled in a certain order.
 ;;   how to handle this?  fix tramp?
-;; - on emacs 21 we don't kill the -autoloads.el buffer.  what about 22?
 ;; - maybe we need separate .elc directories for various emacs versions
 ;;   and also emacs-vs-xemacs.  That way conditional compilation can
 ;;   work.  But would this break anything?
@@ -139,26 +130,18 @@
 ;;   installing it
 ;; - Interface with desktop.el so that restarting after an install
 ;;   works properly
-;; - Implement M-x package-upgrade, to upgrade any/all existing packages
 ;; - Use hierarchical layout.  PKG/etc PKG/lisp PKG/info
 ;;   ... except maybe lisp?
 ;; - It may be nice to have a macro that expands to the package's
 ;;   private data dir, aka ".../etc".  Or, maybe data-directory
 ;;   needs to be a list (though this would be less nice)
 ;;   a few packages want this, eg sokoban
-;; - package menu needs:
-;;     ability to know which packages are built-in & thus not deletable
-;;     it can sometimes print odd results, like 0.3 available but 0.4 active
-;;        why is that?
 ;; - Allow multiple versions on the server...?
 ;;   [ why bother? ]
 ;; - Don't install a package which will invalidate dependencies overall
-;; - Allow something like (or (>= emacs 21.0) (>= xemacs 21.5))
-;;   [ currently thinking, why bother.. KISS ]
 ;; - Allow optional package dependencies
 ;;   then if we require 'bbdb', bbdb-specific lisp in lisp/bbdb
 ;;   and just don't compile to add to load path ...?
-;; - Have a list of archive URLs?  [ maybe there's no point ]
 ;; - David Kastrup pointed out on the xemacs list that for GPL it
 ;;   is friendlier to ship the source tree.  We could "support" that
 ;;   by just having a "src" subdir in the package.  This isn't ideal
