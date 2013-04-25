@@ -514,7 +514,6 @@ NAME must be a symbol."
                       (package-version-join (cadr elt))))
             (package-desc-reqs desc))))))
 
-(defun package-desc-match-file-name (str)
 (defun package-desc-to-archive-format (desc &optional body-only)
   "Return a cons cell of the form used in \"archive-contents\" files.
 This is of the form \"(foo . [(1 2 3) nil \"Package about foo\" single])\".
@@ -530,6 +529,7 @@ return only the body vector."
       (cons (package-desc-name desc)
             vec))))
 
+(defun package--match-descriptor-name (str)
   "Return non-nil if STR is a valid package descriptor file name.
 Expects the string to be the package name.  The name must be of
 the form \"foo-1.2.3/foo-pkg.el\""
@@ -538,6 +538,13 @@ the form \"foo-1.2.3/foo-pkg.el\""
                         (match-string 0 str)
                         (match-string 1 str))
                 str)))
+
+(defun package--match-readme-name (str)
+  "Return non-nil if STR is a valid package readme file name.
+Expects the string to be the readme name.  The name must be of
+the form \"foo-1.2.3/README\""
+  (and (string-match (concat "\\`" package-subdirectory-regexp) str)
+       (string= (format "%s/README" (match-string 0 str)) str)))
 
 (defun package--buffer-tar-p ()
   "Return non-nil if the current buffer is a tar file.
@@ -552,6 +559,21 @@ This uses the internal function `tar-header-block-tokenize' from `tar-mode'"
           (error nil))
       (set-buffer-multibyte old-multibyte-val))))
 
+(defun package--file-from-tar (name-matcher)
+  "Get the contents of a file within a tar archive.
+NAME-MATCHER is a function of one argument which will receive the
+name of each file in the archive. It should return non-nil for
+the file whose contents should be returned.
+
+The current buffer in `tar-mode'."
+  (let* ((header-data (cl-find-if name-matcher
+                              tar-parse-info
+                              :key #'tar-header-name))
+         start (tar-header-data-start descriptor-file-data)
+         end   (+ start (tar-header-size descriptor-file-data)))
+    (with-current-buffer (if (tar-data-swapped-p) tar-data-buffer (current-buffer))
+      (buffer-substring-no-properties start end))))
+
 (defun package-buffer-info ()
   "Return a `package-desc' for the package in the current buffer.
 Handles both single files tar archives.
@@ -565,21 +587,21 @@ boundaries."
   (when (package--buffer-tar-p)
     (tar-mode))
   (if (eq major-mode 'tar-mode)
-      (let ((tar-data (cl-find-if #'package-desc-match-file-name
-                                  tar-parse-info
-                                  :key #'tar-header-name))
-            start end pkg-def-parsed)
-        (unless tar-data
+      (let ((descriptor-contents
+             (package--file-from-tar #'package--match-descriptor-name))
+            (commentary
+             (package--file-from-tar #'package--match-readme-name))
+            pkg-def-parsed)
+        (unless descriptor-contents
           (error "No package descriptor file found."))
-        (with-current-buffer
-            (if (tar-data-swapped-p) tar-data-buffer (current-buffer))
-          (setq start          (tar-header-data-start tar-data)
-                end            (+ start (tar-header-size tar-data))
-                pkg-def-parsed (package-read-from-string (buffer-substring-no-properties start end)))
-          (unless (eq (car pkg-def-parsed) 'define-package)
-            (error "No `define-package' sexp is present in `%s-%s.el'"
-                   pkg-name (package-version-join pkg-version)))
-          (apply #'package-desc-from-define (append (cdr pkg-def-parsed)))))
+        (setq pkg-def-parsed (package-read-from-string descriptor-contents))
+        (unless (eq (car pkg-def-parsed) 'define-package)
+          (error "No `define-package' sexp is present in `%s-%s.el'"
+                 pkg-name (package-version-join pkg-version)))
+        (apply #'package-desc-from-define
+               (append (cdr pkg-def-parsed)
+                       (if commentary
+                           (list :commentary commentary)))))
 
     (goto-char (point-min))
     (unless (re-search-forward "^;;; \\([^ ]*\\)\\.el ---[ \t]*\\(.*?\\)[ \t]*\\(-\\*-.*-\\*-[ \t]*\\)?$" nil t)
