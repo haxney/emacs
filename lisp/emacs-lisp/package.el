@@ -583,6 +583,26 @@ The current buffer in `tar-mode'."
     (with-current-buffer (if (tar-data-swapped-p) tar-data-buffer (current-buffer))
       (buffer-substring-no-properties start end))))
 
+(defun package--strip-commentary (str)
+  "Strip the extraneous characters from STR, a commentary string."
+  (if str
+   (with-temp-buffer
+     (insert str)
+     (goto-char (point-min))
+     ;; Delete the ";;; Commentary" section header
+     (lm-commentary-start)
+     (delete-region (match-beginning 0)
+                    (match-end 0))
+     (while (re-search-forward "^;+ " nil t)
+       (replace-match ""))
+
+     (goto-char (point-min))
+     (re-search-forward "\\S-")
+     (delete-region (point-min) (match-beginning 0))
+     (delete-trailing-whitespace)
+
+     (buffer-string))))
+
 (defun package-buffer-info ()
   "Return a `package-desc' for the package in the current buffer.
 Handles both single files tar archives.
@@ -631,7 +651,8 @@ boundaries."
              (pkg-version
               (or (package-strip-rcs-id (lm-header "package-version"))
                   (package-strip-rcs-id (lm-header "version"))))
-             (commentary (lm-commentary)))
+             (commentary (package--strip-commentary (lm-commentary))))
+
         (unless pkg-version
           (error "Package lacks a \"Version\" or \"Package-Version\" header"))
         (package-desc-from-define file-name

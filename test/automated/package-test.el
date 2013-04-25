@@ -53,11 +53,10 @@
                            "A single-file package with no dependencies"
                            nil single nil
                            ,(concat
-                             ";;; Commentary:\n\n;; "
                              "This package provides a minor mode to frobnicate "
-                             "and/or bifurcate\n;; any flanges you desire. "
-                             "To activate it, type \"C-M-r M-3 butterfly\"\n;; "
-                             "and all your dreams will come true.\n\n")]
+                             "and/or bifurcate\nany flanges you desire. "
+                             "To activate it, type \"C-M-r M-3 butterfly\"\n"
+                             "and all your dreams will come true.\n")]
   "Expected `package-desc' parsed from simple-single-1.3.el.")
 
 (defvar simple-single-desc-1-4
@@ -65,19 +64,18 @@
                            "A single-file package with no dependencies"
                            nil single nil
                            ,(concat
-                             ";;; Commentary:\n\n;; "
                              "This package provides a minor mode to frobnicate "
-                             "and/or bifurcate\n;; any flanges you desire. "
-                             "To activate it, type \"C-M-r M-3 butterfly\"\n;; "
+                             "and/or bifurcate\nany flanges you desire. "
+                             "To activate it, type \"C-M-r M-3 butterfly\"\n"
                              "and all your dreams will come true.\n"
-                             ";;\n;; This is a new, updated version.\n\n")]
+                             "\nThis is a new, updated version.\n")]
   "Expected `package-desc' parsed from simple-single-1.4.el.")
 
 (defvar simple-depend-desc
   [cl-struct-package-desc simple-depend (1 0)
                           "A single-file package with a dependency."
                           ((simple-single (1 3))) single nil
-                          ";;; Commentary:\n\n;; Depends on another package.\n\n"]
+                          "Depends on another package.\n"]
   "Expected `package-desc' parsed from simple-depend-1.0.el.")
 
 (defvar new-pkg-desc [cl-struct-package-desc new-pkg (1 0)
