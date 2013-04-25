@@ -241,6 +241,9 @@ a package can run arbitrary code."
   "Version number of the package archive understood by this file.
 Lower version numbers than this will probably be understood as well.")
 
+(defconst package--archive-contents-filename "archive-contents"
+  "Name of the file used to store the metadata for an archive.")
+
 (defconst package-el-version "1.0"
   "Version of package.el.")
 
@@ -1011,7 +1014,7 @@ If successful, set `package-archive-contents'."
 If successful, set the variable `package-archive-contents'.
 If the archive version is too new, signal an error."
   (let* ((dir (concat "archives/" archive))
-         (contents-file (concat dir "/archive-contents"))
+         (contents-file (format "%s/%s" dir package--archive-contents-filename))
          contents)
     (when (setq contents (package--read-archive-file contents-file))
       (dolist (package contents)
@@ -1214,7 +1217,8 @@ makes them available for download."
     (make-directory package-user-dir t))
   (dolist (archive package-archives)
     (condition-case-unless-debug nil
-        (package--download-one-archive archive "archive-contents")
+        (package--download-one-archive archive
+                                       package--archive-contents-filename)
       (error (message "Failed to download `%s' archive."
                       (car archive)))))
   (package-read-all-archive-contents))

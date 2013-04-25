@@ -89,7 +89,7 @@
   "Base directory of package test files.")
 
 (defvar package-test-fake-contents-file
-  (expand-file-name "archive-contents" package-test-data-dir)
+  (expand-file-name package--archive-contents-filename package-test-data-dir)
   "Path to a static copy of \"archive-contents\".")
 
 (defvar package-test-built-file-suffixes '(".tar" "/dir" "/*.info")
