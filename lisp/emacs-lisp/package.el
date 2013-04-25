@@ -475,8 +475,8 @@ NAME must be a symbol."
 
 (defun package-desc-match-file-name (str)
   "Return non-nil if STR is a valid package descriptor file name.
-Expects the string to be the package name  . The name must be of the
-form \"foo-1.2.3/foo-pkg.el\""
+Expects the string to be the package name.  The name must be of
+the form \"foo-1.2.3/foo-pkg.el\""
   (and (string-match (concat "\\`" package-subdirectory-regexp) str)
        (string= (format "%s/%s-pkg.el"
                         (match-string 0 str)
