@@ -483,6 +483,17 @@ the form \"foo-1.2.3/foo-pkg.el\""
                         (match-string 1 str))
                 str)))
 
+(defun package--buffer-tar-p ()
+  "Return non-nil if the current buffer is a tar file.
+This uses the internal function `tar-header-block-tokenize' from `tar-mode'"
+  (let ((old-multibyte-val enable-multibyte-characters))
+    (unwind-protect
+        (progn (set-buffer-multibyte nil)
+               (tar-header-magic
+                (tar-header-block-tokenize (point-min)
+                                           tar-file-name-coding-system)))
+      (set-buffer-multibyte old-multibyte-val))))
+
 (defun package-desc-from-tar ()
   "Read the \"*-pkg.el\" file from the tar archive in the current buffer."
   (unless (eq major-mode 'tar-mode)
