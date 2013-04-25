@@ -3,6 +3,7 @@
 ;; Copyright (C) 2007-2013 Free Software Foundation, Inc.
 
 ;; Author: Tom Tromey <tromey@redhat.com>
+;;         Daniel Hackney <dan@haxney.org>
 ;; Created: 10 Mar 2007
 ;; Version: 0.9
 ;; Keywords: tools
@@ -46,7 +47,7 @@
 (require 'package)
 (defvar gnus-article-buffer)
 
-(defcustom package-archive-upload-base "/path/to/archive"
+(defcustom package-archive-upload-base nil
   "The base location of the archive to which packages are uploaded.
 This should be an absolute directory name.  If the archive is on
 another machine, you may specify a remote name in the usual way,
@@ -81,20 +82,20 @@ Unlike `package-archives', you can't specify a HTTP URL."
 (defun package--make-rss-entry (title text archive-url)
   (let ((date-string (format-time-string "%a, %d %B %Y %T %z")))
     (concat "<item>\n"
-	    "<title>" (package--encode title) "</title>\n"
-	    ;; FIXME: should have a link in the web page.
-	    "<link>" archive-url "news.html</link>\n"
-	    "<description>" (package--encode text) "</description>\n"
-	    "<pubDate>" date-string "</pubDate>\n"
-	    "</item>\n")))
+            "<title>" (package--encode title) "</title>\n"
+            ;; FIXME: should have a link in the web page.
+            "<link>" archive-url "news.html</link>\n"
+            "<description>" (package--encode text) "</description>\n"
+            "<pubDate>" date-string "</pubDate>\n"
+            "</item>\n")))
 
 (defun package--make-html-entry (title text)
   (concat "<li> " (format-time-string "%B %e") " - "
-	  title " - " (package--encode text)
-	  " </li>\n"))
+          title " - " (package--encode text)
+          " </li>\n"))
 
 (defun package--update-file (file tag text)
-  "Update the package archive file named FILE.
+  "Update the package news file named FILE.
 FILE should be relative to `package-archive-upload-base'.
 TAG is a string that can be found within the file; TEXT is
 inserted after its first occurrence in the file."
@@ -102,47 +103,15 @@ inserted after its first occurrence in the file."
   (save-excursion
     (let ((old-buffer (find-buffer-visiting file)))
       (with-current-buffer (let ((find-file-visit-truename t))
-			     (or old-buffer (find-file-noselect file)))
-	(goto-char (point-min))
-	(search-forward tag)
-	(forward-line)
-	(insert text)
-	(let ((file-precious-flag t))
-	  (save-buffer))
-	(unless old-buffer
-	  (kill-buffer (current-buffer)))))))
-
-(defun package--archive-contents-from-url (archive-url)
-  "Parse archive-contents file at ARCHIVE-URL.
-Return the file contents, as a string, or nil if unsuccessful."
-  (ignore-errors
-    (when archive-url
-      (let* ((buffer (url-retrieve-synchronously
-		      (concat archive-url "archive-contents"))))
-	(set-buffer buffer)
-	(package-handle-response)
-	(re-search-forward "^$" nil 'move)
-	(forward-char)
-	(delete-region (point-min) (point))
-	(prog1 (package-read-from-string
-		(buffer-substring-no-properties (point-min) (point-max)))
-	  (kill-buffer buffer))))))
-
-(defun package--archive-contents-from-file ()
-  "Parse the archive-contents at `package-archive-upload-base'"
-  (let ((file (expand-file-name "archive-contents"
-				package-archive-upload-base)))
-    (if (not (file-exists-p file))
-	;; No existing archive-contents means a new archive.
-	(list package-archive-version)
-      (let ((dont-kill (find-buffer-visiting file)))
-	(with-current-buffer (let ((find-file-visit-truename t))
-			       (find-file-noselect file))
-	  (prog1
-	      (package-read-from-string
-	       (buffer-substring-no-properties (point-min) (point-max)))
-	    (unless dont-kill
-	      (kill-buffer (current-buffer)))))))))
+                             (or old-buffer (find-file-noselect file)))
+        (goto-char (point-min))
+        (search-forward tag)
+        (forward-line)
+        (insert text)
+        (let ((file-precious-flag t))
+          (save-buffer))
+        (unless old-buffer
+          (kill-buffer (current-buffer)))))))
 
 (defun package-maint-add-news-item (title description archive-url)
   "Add a news item to the webpages associated with the package archive.
@@ -150,150 +119,109 @@ TITLE is the title of the news item.
 DESCRIPTION is the text of the news item."
   (interactive "sTitle: \nsText: ")
   (package--update-file "elpa.rss"
-			"<description>"
-			(package--make-rss-entry title description archive-url))
+                        "<description>"
+                        (package--make-rss-entry title description archive-url))
   (package--update-file "news.html"
-			"New entries go here"
-			(package--make-html-entry title description)))
+                        "New entries go here"
+                        (package--make-html-entry title description)))
 
-(defun package--update-news (package version description archive-url)
-  "Update the ELPA web pages when a package is uploaded."
-  (package-maint-add-news-item (concat package " version " version)
-			       description
-			       archive-url))
+(defun package-x--maybe-create-upload-base ()
+  "Asks the user to create `package-archive-upload-base' if it does not exist.
+Returns whether `package-archive-upload-base' exists.
 
-(defun package-upload-buffer-internal (pkg-info extension &optional archive-url)
-  "Upload a package whose contents are in the current buffer.
-PKG-INFO is the package info, see `package-buffer-info'.
-EXTENSION is the file extension, a string.  It can be either
-\"el\" or \"tar\".
+If `package-archive-upload-base' is not set, asks the user for a
+value."
+  (unless (stringp package-archive-upload-base)
+    (setq package-archive-upload-base
+          (read-directory-name
+           "Base directory for package archive: ")))
 
-The upload destination is given by `package-archive-upload-base'.
-If its value is invalid, prompt for a directory.
+  (if (and (not (file-directory-p package-archive-upload-base))
+           (y-or-n-p (format "%s does not exist; create it? "
+                             package-archive-upload-base)))
+      (make-directory package-archive-upload-base t))
 
-Optional arg ARCHIVE-URL is the URL of the destination archive.
-If it is non-nil, compute the new \"archive-contents\" file
-starting from the existing \"archive-contents\" at that URL.  In
-addition, if `package-update-news-on-upload' is non-nil, call
-`package--update-news' to add a news item at that URL.
-
-If ARCHIVE-URL is nil, compute the new \"archive-contents\" file
-from the \"archive-contents\" at `package-archive-upload-base',
-if it exists."
-  (let ((package-archive-upload-base package-archive-upload-base))
-    ;; Check if `package-archive-upload-base' is valid.
-    (when (or (not (stringp package-archive-upload-base))
-	      (equal package-archive-upload-base
-		     (car-safe
-		      (get 'package-archive-upload-base 'standard-value))))
-      (setq package-archive-upload-base
-	    (read-directory-name
-	     "Base directory for package archive: ")))
-    (unless (file-directory-p package-archive-upload-base)
-      (if (y-or-n-p (format "%s does not exist; create it? "
-			    package-archive-upload-base))
-	  (make-directory package-archive-upload-base t)
-	(error "Aborted")))
-    (save-excursion
-      (save-restriction
-	(let* ((file-type (cond
-			   ((equal extension "el") 'single)
-			   ((equal extension "tar") 'tar)
-			   (t (error "Unknown extension `%s'" extension))))
-	       (file-name (aref pkg-info 0))
-	       (pkg-name (intern file-name))
-	       (requires (aref pkg-info 1))
-	       (desc (if (string= (aref pkg-info 2) "")
-			 (read-string "Description of package: ")
-		       (aref pkg-info 2)))
-	       (pkg-version (aref pkg-info 3))
-	       (commentary (aref pkg-info 4))
-	       (split-version (version-to-list pkg-version))
-	       (pkg-buffer (current-buffer)))
-
-	  ;; Get archive-contents from ARCHIVE-URL if it's non-nil, or
-	  ;; from `package-archive-upload-base' otherwise.
-	  (let ((contents (or (package--archive-contents-from-url archive-url)
-			      (package--archive-contents-from-file)))
-		(new-desc (vector split-version requires desc file-type)))
-	    (if (> (car contents) package-archive-version)
-		(error "Unrecognized archive version %d" (car contents)))
-	    (let ((elt (assq pkg-name (cdr contents))))
-	      (if elt
-		  (if (version-list-<= split-version
-				       (package-desc-vers (cdr elt)))
-		      (error "New package has smaller version: %s" pkg-version)
-		    (setcdr elt new-desc))
-		(setq contents (cons (car contents)
-				     (cons (cons pkg-name new-desc)
-					   (cdr contents))))))
-
-	    ;; Now CONTENTS is the updated archive contents.  Upload
-	    ;; this and the package itself.  For now we assume ELPA is
-	    ;; writable via file primitives.
-	    (let ((print-level nil)
-		  (print-length nil))
-	      (write-region (concat (pp-to-string contents) "\n")
-			    nil
-			    (expand-file-name "archive-contents"
-					      package-archive-upload-base)))
-
-	    ;; If there is a commentary section, write it.
-	    (when commentary
-	      (write-region commentary nil
-			    (expand-file-name
-			     (concat (symbol-name pkg-name) "-readme.txt")
-			     package-archive-upload-base)))
-
-	    (set-buffer pkg-buffer)
-	    (write-region (point-min) (point-max)
-			  (expand-file-name
-			   (concat file-name "-" pkg-version "." extension)
-			   package-archive-upload-base)
-			  nil nil nil 'excl)
-
-	    ;; Write a news entry.
-	    (and package-update-news-on-upload
-		 archive-url
-		 (package--update-news (concat file-name "." extension)
-				       pkg-version desc archive-url))
-
-	    ;; special-case "package": write a second copy so that the
-	    ;; installer can easily find the latest version.
-	    (if (string= file-name "package")
-		(write-region (point-min) (point-max)
-			      (expand-file-name
-			       (concat file-name "." extension)
-			       package-archive-upload-base)
-			      nil nil nil 'ask))))))))
+  ;; Return whether the directory exists
+  (file-directory-p package-archive-upload-base))
 
 (defun package-upload-buffer ()
-  "Upload the current buffer as a single-file Emacs Lisp package.
+  "Upload the current buffer as an Emacs package.
 If `package-archive-upload-base' does not specify a valid upload
 destination, prompt for one."
   (interactive)
+  (unless (package-x--maybe-create-upload-base)
+    (error "Archive upload directory does not exist"))
+
   (save-excursion
     (save-restriction
-      ;; Find the package in this buffer.
-      (let ((pkg-info (package-buffer-info)))
-	(package-upload-buffer-internal pkg-info "el")))))
+      (let* ((desc (package-buffer-info))
+             (commentary (package-desc-commentary desc))
+             (contents (package--read-archive-file
+                        (expand-file-name "archive-contents"
+                                          package-archive-upload-base))))
+
+        ;; Update the existing package definition or add a new one
+        (let ((elt (assq (package-desc-name desc) contents)))
+          (if elt
+              (if (version-list-<= (package-desc-version desc)
+                                   (aref (cdr elt) 3))
+                  (error "New package has the same or smaller version: %s"
+                         (package-desc-version-string desc))
+                (setcdr elt (package-desc-to-archive-format desc t)))
+            (push (package-desc-to-archive-format desc) contents)))
+
+        ;; Now CONTENTS is the updated archive contents.  Upload
+        ;; this and the package itself.  For now we assume ELPA is
+        ;; writable via file primitives.
+        (let ((print-level nil)
+              (print-length nil))
+          (write-region (pp-to-string
+                         (cons package-archive-version contents))
+                        nil
+                        (expand-file-name "archive-contents"
+                                          package-archive-upload-base)))
+
+        ;; If there is a commentary section, write it.
+        (when commentary
+          (write-region commentary nil
+                        (expand-file-name
+                         (format "%-readme.txt" (package-desc-name desc))
+                         package-archive-upload-base)))
+
+        (write-region (point-min) (point-max)
+                      (expand-file-name (package-desc-filename desc)
+                                        package-archive-upload-base)
+                      nil nil nil 'excl)
+
+        ;; Write a news entry.
+        (if package-update-news-on-upload
+            (package-maint-add-news-item desc))
+
+        ;; special-case "package": write a second copy so that the
+        ;; installer can easily find the latest version.
+        (if (string= file-name "package")
+            (write-region (point-min) (point-max)
+                          (expand-file-name
+                           (concat file-name "." extension)
+                           package-archive-upload-base)
+                          nil nil nil 'ask))))))
 
 (defun package-upload-file (file)
   "Upload the Emacs Lisp package FILE to the package archive.
 Interactively, prompt for FILE.  The package is considered a
 single-file package if FILE ends in \".el\", and a multi-file
-package if FILE ends in \".tar\".
-If `package-archive-upload-base' does not specify a valid upload
+package if FILE ends in \".tar\".  If
+`package-archive-upload-base' does not specify a valid upload
 destination, prompt for one."
   (interactive "fPackage file name: ")
+  (if (not (or (string-match "\\.tar$" file)
+               (string-match "\\.el$" file)))
+      (error "Unrecognized extension `%s'"
+             (file-name-extension file)))
+
   (with-temp-buffer
     (insert-file-contents-literally file)
-    (let ((info (cond
-		 ((string-match "\\.tar$" file) (package-tar-file-info file))
-		 ((string-match "\\.el$" file) (package-buffer-info))
-		 (t (error "Unrecognized extension `%s'"
-			   (file-name-extension file))))))
-      (package-upload-buffer-internal info (file-name-extension file)))))
+    (package-upload-buffer)))
 
 (defun package-gnus-summary-upload ()
   "Upload a package contained in the current *Article* buffer.
