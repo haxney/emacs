@@ -290,8 +290,8 @@ contrast, `package-user-dir' contains packages for personal use."
                 (name-string version-string &optional summary requirements
                              &key kind archive
                              &aux (name (intern name-string))
-                             (version (ignore-errors (version-to-list version-string)))
-                             (reqs (ignore-errors (package-parse-requires-header requirements))))))
+                             (version (version-to-list version-string))
+                             (reqs (package-parse-requires-header requirements)))))
               "Structure containing information about an individual package.
 
 Slots:
