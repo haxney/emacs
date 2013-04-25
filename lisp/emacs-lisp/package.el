@@ -575,8 +575,8 @@ The current buffer in `tar-mode'."
   (let* ((header-data (cl-find-if name-matcher
                               tar-parse-info
                               :key #'tar-header-name))
-         start (tar-header-data-start descriptor-file-data)
-         end   (+ start (tar-header-size descriptor-file-data)))
+         (start (tar-header-data-start header-data))
+         (end   (+ start (tar-header-size header-data))))
     (with-current-buffer (if (tar-data-swapped-p) tar-data-buffer (current-buffer))
       (buffer-substring-no-properties start end))))
 
