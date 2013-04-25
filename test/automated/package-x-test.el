@@ -53,41 +53,11 @@
                    nil "A single-file package with no dependencies" single])
   "Expected contents of the archive entry from the updated \"simple-single\" package.")
 
-(cl-defmacro with-package-x-test ((&optional &key file basedir build-dir update-news) &rest body)
-  "Set up temporary locations and variables for testing."
-  (declare (indent 1))
-  `(let* ((package-x-test-archive-upload-base (make-temp-file "pkg-archive-base-" t))
-          (package-x-archive-upload-base package-x-test-archive-upload-base)
-          (old-yes-no-defn (symbol-function 'yes-or-no-p))
-          (old-pwd default-directory)
-          package--initialized
-          ,@(if build-dir (list (list 'build-dir build-dir)
-                                (list 'build-tar (concat build-dir ".tar")))
-              (list (cl-gensym)))
-          ,@(if update-news
-                '(package-x-update-news-on-upload t)
-              (list (cl-gensym)))) ;; Dummy value so `let' doesn't try to bind `nil'
-     (unwind-protect
-         (progn
-           ,(if basedir (list 'cd basedir))
-           (setf (symbol-function 'yes-or-no-p) #'(lambda (&rest r) t))
-
-           (if (boundp 'build-dir)
-               (package-test-build-multifile build-dir))
-           (with-temp-buffer
-             ,(if file
-                  (list 'insert-file-contents file))
-             ,@body))
-       ,(if build-dir
-            (list 'package-test-cleanup-built-files build-dir))
-       (when (file-directory-p package-x-test-archive-upload-base)
-         (delete-directory package-x-test-archive-upload-base t))
-       (setf (symbol-function 'yes-or-no-p) old-yes-no-defn)
-       (cd old-pwd))))
-
 (ert-deftest package-x-test-upload-buffer ()
   "Test creating an \"archive-contents\" file"
-  (with-package-x-test (:basedir "data/package" :file "simple-single-1.3.el")
+  (with-package-test (:basedir "data/package"
+                               :file "simple-single-1.3.el"
+                               :upload-base t)
     (package-x-upload-buffer)
     (should (file-exists-p (expand-file-name package--archive-contents-filename
                                              package-x-archive-upload-base)))
@@ -109,7 +79,9 @@
 
 (ert-deftest package-x-test-upload-new-version ()
   "Test uploading a new version of a package"
-  (with-package-x-test (:basedir "data/package" :file "simple-single-1.3.el")
+  (with-package-test (:basedir "data/package"
+                               :file "simple-single-1.3.el"
+                               :upload-base t)
     (package-x-upload-buffer)
     (with-temp-buffer
       (insert-file-contents "newer-versions/simple-single-1.4.el")

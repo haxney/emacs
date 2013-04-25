@@ -87,7 +87,13 @@
 (defvar package-test-built-file-suffixes '(".tar" "/dir" "/*.info")
   "Remove these files when cleaning up a built package.")
 
-(cl-defmacro with-package-test ((&optional &key file basedir build-dir install) &rest body)
+(cl-defmacro with-package-test ((&optional &key file
+                                           basedir
+                                           build-dir
+                                           install
+                                           update-news
+                                           upload-base)
+                                &rest body)
   "Set up temporary locations and variables for testing."
   (declare (indent 1))
   `(let* ((package-test-user-dir (make-temp-file "pkg-test-user-dir-" t))
@@ -96,6 +102,13 @@
           (old-yes-no-defn (symbol-function 'yes-or-no-p))
           (old-pwd default-directory)
           package--initialized
+          ,@(if update-news
+                '(package-x-update-news-on-upload t)
+              (list (cl-gensym)))
+          ,@(if upload-base
+                '((package-x-test-archive-upload-base (make-temp-file "pkg-archive-base-" t))
+                  (package-x-archive-upload-base package-x-test-archive-upload-base))
+              (list (cl-gensym)))
           ,@(if build-dir `((build-dir ,build-dir)
                             (build-tar (concat build-dir ".tar")))
               (list (cl-gensym)))) ;; Dummy value so `let' doesn't try to bind `nil'
@@ -116,8 +129,13 @@
              ,@body))
        ,(if build-dir
             `(package-test-cleanup-built-files ,build-dir))
+
        (when (file-directory-p package-test-user-dir)
          (delete-directory package-test-user-dir t))
+
+       (when (and (boundp 'package-x-test-archive-upload-base)
+                  (file-directory-p package-x-test-archive-upload-base))
+         (delete-directory package-x-test-archive-upload-base t))
        (setf (symbol-function 'yes-or-no-p) old-yes-no-defn)
        (cd old-pwd))))
 
