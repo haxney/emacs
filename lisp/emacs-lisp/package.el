@@ -368,6 +368,9 @@ entry in VERSION-ALIST is (VERSION-LIST . PACKAGE-DESC).")
     (tar . "tar"))
   "An alist mapping archive kinds to the associated file suffix")
 
+(defconst package-readme-file-format "%s-readme.txt"
+  "Format of readme files for packages.")
+
 (defun package-read-from-string (str)
   "Read a Lisp expression from STR.
 Signal an error if the entire string was not used."
@@ -502,6 +505,11 @@ This includes a suffix and is of the form \"foo.el\" or
 This is of the form \"/path/to/foo-1.2.3/foo-pkg.el\"."
   (expand-file-name (format "%s-pkg.el" (package-desc-name desc))
                     (package-desc-install-dir desc)))
+
+(defun package-desc-readme-file (desc)
+  "Return the name of the readme file for DESC.
+This is of the form \"foo-readme.txt\"."
+  (format package-readme-file-format (package-desc-name desc)))
 
 (defun package-archive-base (name)
   "Return the archive URL containing the package NAME.
@@ -1393,14 +1401,14 @@ If optional arg NO-ACTIVATE is non-nil, don't activate packages."
               (replace-match ""))
             (while (re-search-forward "^\\(;+ ?\\)" nil t)
               (replace-match ""))))
-      (let ((readme (expand-file-name (format "%s-readme.txt" package-name)
+      (let ((readme (expand-file-name (format package-readme-file-format package-name)
                                       package-user-dir))
             readme-string)
         ;; For elpa packages, try downloading the commentary.  If that
         ;; fails, try an existing readme file in `package-user-dir'.
         (cond ((condition-case nil
                    (package-with-downloaded-file (package-archive-base package)
-                                              (format "%s-readme.txt" package-name)
+                                              (format package-readme-file-format package-name)
                                               (setq buffer-file-name
                                                     (expand-file-name readme package-user-dir))
                                               (let ((version-control 'never))

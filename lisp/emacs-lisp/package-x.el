@@ -205,7 +205,7 @@ destination, prompt for one."
         (when commentary
           (write-region commentary nil
                         (expand-file-name
-                         (format "%s-readme.txt" (package-desc-name desc))
+                         (package-desc-readme-file desc)
                          package-x-archive-upload-base)))
 
         (write-region (point-min) (point-max)
