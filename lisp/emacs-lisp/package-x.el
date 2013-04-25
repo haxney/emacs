@@ -45,6 +45,8 @@
 ;;; Code:
 
 (require 'package)
+(require 'xml)
+
 (defvar gnus-article-buffer)
 
 (defgroup package-x nil
@@ -78,36 +80,26 @@ Unlike `package-archives', you can't specify a HTTP URL."
   'package-x-update-news-on-upload
   "24.4")
 
-(defun package-x--xml-encode (string)
-  "Encode a string by replacing some characters with XML entities."
-  ;; We need a special case for translating "&" to "&amp;".
-  (let ((index))
-    (while (setq index (string-match "[&]" string index))
-      (setq string (replace-match "&amp;" t nil string))
-      (setq index (1+ index))))
-  (while (string-match "[<]" string)
-    (setq string (replace-match "&lt;" t nil string)))
-  (while (string-match "[>]" string)
-    (setq string (replace-match "&gt;" t nil string)))
-  (while (string-match "[']" string)
-    (setq string (replace-match "&apos;" t nil string)))
-  (while (string-match "[\"]" string)
-    (setq string (replace-match "&quot;" t nil string)))
-  string)
+(defcustom package-x-public-archive-url nil
+  "Public URL of the package archive.
+Appears in news and RSS entries."
+  :type 'string
+  :group 'package-x
+  :version "24.4")
 
 (defun package-x--make-rss-entry (title text archive-url)
   (let ((date-string (format-time-string "%a, %d %B %Y %T %z")))
     (concat "<item>\n"
-            "<title>" (package--encode title) "</title>\n"
+            "<title>" (xml-escape-string title) "</title>\n"
             ;; FIXME: should have a link in the web page.
             "<link>" archive-url "news.html</link>\n"
-            "<description>" (package--encode text) "</description>\n"
+            "<description>" (xml-escape-string text) "</description>\n"
             "<pubDate>" date-string "</pubDate>\n"
             "</item>\n")))
 
-(defun package-x--make-html-entry (title text)
+(defun package-x--make-html-entry (title text archive-url)
   (concat "<li> " (format-time-string "%B %e") " - "
-          title " - " (package--encode text)
+          title " - " (xml-escape-string text)
           " </li>\n"))
 
 (defun package-x--update-file (file tag text)
@@ -129,14 +121,14 @@ inserted after its first occurrence in the file."
         (unless old-buffer
           (kill-buffer (current-buffer)))))))
 
-(defun package-x-add-news-item (title description archive-url)
+(defun package-x-add-news-item (title description)
   "Add a news item to the webpages associated with the package archive.
 TITLE is the title of the news item.
 DESCRIPTION is the text of the news item."
   (interactive "sTitle: \nsText: ")
   (package--update-file "elpa.rss"
                         "<description>"
-                        (package--make-rss-entry title description archive-url))
+                        (package--make-rss-entry title description))
   (package--update-file "news.html"
                         "New entries go here"
                         (package--make-html-entry title description)))
@@ -214,8 +206,9 @@ destination, prompt for one."
                       nil nil nil 'excl)
 
         ;; Write a news entry.
-        (if package-update-news-on-upload
-            (package-maint-add-news-item desc))))))
+        (if (and package-x-update-news-on-upload
+                 package-x-public-archive-url)
+            (package-x-add-news-item desc))))))
 
 (defun package-x-upload-file (file)
   "Upload the Emacs Lisp package FILE to the package archive.
