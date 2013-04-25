@@ -173,18 +173,21 @@ destination, prompt for one."
                                           package-x-archive-upload-base))))
 
         ;; Update the existing package definition or add a new one
-        (let ((elt (assq (package-desc-name desc) contents)))
+        (let* ((elt (assq (package-desc-name desc) contents))
+               old-pkg)
           (if elt
-              (if (version-list-<= (package-desc-version desc)
-                                   (aref (cdr elt) 3))
-                  (error "New package has the same or smaller version: %s"
-                         (package-desc-version-string desc))
-                (setcdr elt (package-desc-to-archive-format desc t)))
+              (progn
+                (setq old-pkg (package-desc-from-archive-format elt))
+                (if (version-list-<= (package-desc-version desc)
+                                     (package-desc-version old-pkg))
+                    (error "New package has the same or smaller version: %s"
+                           (package-desc-version-string desc))
+                  (setcdr elt (package-desc-to-archive-format desc t))))
             (push (package-desc-to-archive-format desc) contents)))
 
-        ;; Now CONTENTS is the updated archive contents.  Upload
-        ;; this and the package itself.  For now we assume ELPA is
-        ;; writable via file primitives.
+        ;; Now CONTENTS is the updated archive contents.  Upload this
+        ;; and the package itself.  For now we assume ELPA is writable
+        ;; via file primitives.
         (let ((print-level nil)
               (print-length nil))
           (write-region (pp-to-string

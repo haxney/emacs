@@ -546,6 +546,18 @@ return only the body vector."
       (cons (package-desc-name desc)
             vec))))
 
+(defun package-desc-from-archive-format (pkg &optional archive)
+  "Return a `package-desc' from PKG, a \"archive-contents\" element.
+These are the offsets into the \"archive-contents\" array. They
+are formatted this way for historical reasons which is why they
+are magic numbers here."
+  (package-desc-create :name (car pkg)
+                       :version (aref (cdr pkg) 0)
+                       :reqs (aref (cdr pkg) 1)
+                       :summary (aref (cdr pkg) 2)
+                       :kind (aref (cdr pkg) 3)
+                       :archive archive))
+
 (defun package--match-descriptor-name (str)
   "Return non-nil if STR is a valid package descriptor file name.
 Expects the string to be the package name.  The name must be of
@@ -1053,16 +1065,7 @@ If the archive version is too new, signal an error."
   "Add the PACKAGE from the given ARCHIVE if necessary.
 Also, add the originating archive to the `package-desc' structure."
   (let* ((name (car package))
-         (pkg-desc
-          ;; These are the offsets into the "archive-contents"
-          ;; array. They are formatted this way for historical reasons
-          ;; which is why they are magic numbers here.
-          (package-desc-create :name name
-                               :version (aref (cdr package) 0)
-                               :reqs (aref (cdr package) 1)
-                               :summary (aref (cdr package) 2)
-                               :kind (aref (cdr package) 3)
-                               :archive archive))
+         (pkg-desc (package-desc-from-archive-format package archive))
          (entry (cons name pkg-desc))
          (existing-package (assq name package-archive-contents)))
     (cond ((not existing-package)
