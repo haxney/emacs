@@ -72,6 +72,13 @@
                           "Depends on another package.\n"]
   "Expected `package-desc' parsed from simple-depend-1.0.el.")
 
+(defvar multi-file-desc
+  [cl-struct-package-desc multi-file (0 2 3)
+                          "Example of a multi-file tar package"
+                          nil tar nil
+                          "This is a bare-bones readme file for the multi-file package.\n"]
+  "Expected `package-desc' from \"multi-file-0.2.3.tar\".")
+
 (defvar new-pkg-desc [cl-struct-package-desc new-pkg (1 0)
                                              "A package only seen after \"updating\" archive-contents"
                                              nil single nil]
@@ -205,7 +212,11 @@ Must called from within a `tar-mode' buffer."
   (with-package-test (:basedir "data/package" :file "simple-single-1.3.el")
     (should (equal (package-desc-from-buffer) simple-single-desc)))
   (with-package-test (:basedir "data/package" :file "simple-depend-1.0.el")
-    (should (equal (package-desc-from-buffer) simple-depend-desc))))
+    (should (equal (package-desc-from-buffer) simple-depend-desc)))
+  (with-package-test (:basedir "data/package"
+                               :build-dir "multi-file-0.2.3"
+                               :file "multi-file-0.2.3.tar")
+    (should (equal (package-desc-from-buffer) multi-file-desc))))
 
 (ert-deftest package-test-install-single ()
   "Install a single file without using an archive."

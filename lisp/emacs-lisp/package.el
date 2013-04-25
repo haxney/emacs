@@ -615,7 +615,8 @@ If the buffer is a tar file but is not in `tar-mode', enter
 If the buffer does not contain a conforming package, signal an
 error.  If there is a package, narrow the buffer to the file's
 boundaries."
-  (when (package--buffer-tar-p)
+  (when (and (not (eq major-mode 'tar-mode))
+             (package--buffer-tar-p))
     (tar-mode))
   (if (eq major-mode 'tar-mode)
       (let ((descriptor-contents
@@ -631,8 +632,9 @@ boundaries."
                  pkg-name (package-version-join pkg-version)))
         (apply #'package-desc-from-define
                (append (cdr pkg-def-parsed)
+                       '(:kind tar)
                        (if commentary
-                           (list :commentary commentary)))))
+                           `(:commentary ,commentary)))))
 
     (goto-char (point-min))
     (unless (re-search-forward "^;;; \\([^ ]*\\)\\.el ---[ \t]*\\(.*?\\)[ \t]*\\(-\\*-.*-\\*-[ \t]*\\)?$" nil t)
