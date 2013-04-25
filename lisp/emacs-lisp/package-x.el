@@ -166,7 +166,7 @@ destination, prompt for one."
 
   (save-excursion
     (save-restriction
-      (let* ((desc (package-buffer-info))
+      (let* ((desc (package-desc-from-buffer))
              (commentary (package-desc-commentary desc))
              (contents (package--read-archive-file
                         (expand-file-name package--archive-contents-filename

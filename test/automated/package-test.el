@@ -200,12 +200,12 @@ Must called from within a `tar-mode' buffer."
       (when (string= tar-name filename)
         (cl-return t)))))
 
-(ert-deftest package-test-buffer-info ()
+(ert-deftest package-test-desc-from-buffer ()
   "Parse an elisp buffer to get a `package-desc' object."
   (with-package-test (:basedir "data/package" :file "simple-single-1.3.el")
-    (should (equal (package-buffer-info) simple-single-desc)))
+    (should (equal (package-desc-from-buffer) simple-single-desc)))
   (with-package-test (:basedir "data/package" :file "simple-depend-1.0.el")
-    (should (equal (package-buffer-info) simple-depend-desc))))
+    (should (equal (package-desc-from-buffer) simple-depend-desc))))
 
 (ert-deftest package-test-install-single ()
   "Install a single file without using an archive."

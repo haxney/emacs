@@ -623,7 +623,7 @@ The current buffer in `tar-mode'."
 
      (buffer-string))))
 
-(defun package-buffer-info ()
+(defun package-desc-from-buffer ()
   "Return a `package-desc' for the package in the current buffer.
 Handles both single files tar archives.
 
@@ -922,7 +922,7 @@ This uses `tar-untar-buffer' from Tar mode."
 If there is already a package installed at the target directory,
 delete that directory unless NO-OVERWRITE is non-nil."
   (tar-mode)
-  (let* ((desc (package-buffer-info))
+  (let* ((desc (package-desc-from-buffer))
          (target-dir (expand-file-name (package-desc-base-name desc)
                                        package-user-dir))
          (default-directory package-user-dir))
@@ -938,7 +938,7 @@ delete that directory unless NO-OVERWRITE is non-nil."
   "Install a single-file package from the current buffer.
 Includes any dependencies."
   (interactive)
-  (let* ((desc (package-buffer-info))
+  (let* ((desc (package-desc-from-buffer))
          (name (package-desc-name desc))
          (requires (package-desc-reqs desc))
          (transaction (package-compute-transaction nil requires))
