@@ -29,7 +29,7 @@
 ;; This file currently contains parts of the package system that many
 ;; won't need, such as package uploading.
 
-;; To upload to an archive, first set `package-archive-upload-base' to
+;; To upload to an archive, first set `package-x-archive-upload-base' to
 ;; some desired directory.  For testing purposes, you can specify any
 ;; directory you want, but if you want the archive to be accessible to
 ;; others via http, this is typically a directory in the /var/www tree
@@ -47,7 +47,12 @@
 (require 'package)
 (defvar gnus-article-buffer)
 
-(defcustom package-archive-upload-base nil
+(defgroup package-x nil
+  "Maintenance of package archives."
+  :group 'package
+  :version "24.4")
+
+(defcustom package-x-archive-upload-base nil
   "The base location of the archive to which packages are uploaded.
 This should be an absolute directory name.  If the archive is on
 another machine, you may specify a remote name in the usual way,
@@ -56,13 +61,24 @@ See Info node `(emacs)Remote Files'.
 
 Unlike `package-archives', you can't specify a HTTP URL."
   :type 'directory
-  :group 'package
-  :version "24.1")
+  :group 'package-x
+  :version "24.4")
 
-(defvar package-update-news-on-upload nil
-  "Whether uploading a package should also update NEWS and RSS feeds.")
+(define-obsolete-variable-alias 'package-x-archive-upload-base
+  'package-x-archive-upload-base
+  "24.4")
 
-(defun package--encode (string)
+(defcustom package-x-update-news-on-upload nil
+  "Whether uploading a package should also update NEWS and RSS feeds."
+  :type 'boolean
+  :group 'package-x
+  :version "24.4")
+
+(define-obsolete-variable-alias 'package-update-news-on-upload
+  'package-x-update-news-on-upload
+  "24.4")
+
+(defun package-x--xml-encode (string)
   "Encode a string by replacing some characters with XML entities."
   ;; We need a special case for translating "&" to "&amp;".
   (let ((index))
@@ -79,7 +95,7 @@ Unlike `package-archives', you can't specify a HTTP URL."
     (setq string (replace-match "&quot;" t nil string)))
   string)
 
-(defun package--make-rss-entry (title text archive-url)
+(defun package-x--make-rss-entry (title text archive-url)
   (let ((date-string (format-time-string "%a, %d %B %Y %T %z")))
     (concat "<item>\n"
             "<title>" (package--encode title) "</title>\n"
@@ -89,17 +105,17 @@ Unlike `package-archives', you can't specify a HTTP URL."
             "<pubDate>" date-string "</pubDate>\n"
             "</item>\n")))
 
-(defun package--make-html-entry (title text)
+(defun package-x--make-html-entry (title text)
   (concat "<li> " (format-time-string "%B %e") " - "
           title " - " (package--encode text)
           " </li>\n"))
 
-(defun package--update-file (file tag text)
+(defun package-x--update-file (file tag text)
   "Update the package news file named FILE.
-FILE should be relative to `package-archive-upload-base'.
+FILE should be relative to `package-x-archive-upload-base'.
 TAG is a string that can be found within the file; TEXT is
 inserted after its first occurrence in the file."
-  (setq file (expand-file-name file package-archive-upload-base))
+  (setq file (expand-file-name file package-x-archive-upload-base))
   (save-excursion
     (let ((old-buffer (find-buffer-visiting file)))
       (with-current-buffer (let ((find-file-visit-truename t))
@@ -113,7 +129,7 @@ inserted after its first occurrence in the file."
         (unless old-buffer
           (kill-buffer (current-buffer)))))))
 
-(defun package-maint-add-news-item (title description archive-url)
+(defun package-x-add-news-item (title description archive-url)
   "Add a news item to the webpages associated with the package archive.
 TITLE is the title of the news item.
 DESCRIPTION is the text of the news item."
@@ -125,28 +141,32 @@ DESCRIPTION is the text of the news item."
                         "New entries go here"
                         (package--make-html-entry title description)))
 
-(defun package-x--maybe-create-upload-base ()
-  "Asks the user to create `package-archive-upload-base' if it does not exist.
-Returns whether `package-archive-upload-base' exists.
+(define-obsolete-function-alias 'package-maint-add-news-item
+  'package-x-add-news-item
+  "24.4")
 
-If `package-archive-upload-base' is not set, asks the user for a
+(defun package-x--maybe-create-upload-base ()
+  "Asks the user to create `package-x-archive-upload-base' if it does not exist.
+Returns whether `package-x-archive-upload-base' exists.
+
+If `package-x-archive-upload-base' is not set, asks the user for a
 value."
-  (unless (stringp package-archive-upload-base)
-    (setq package-archive-upload-base
+  (unless (stringp package-x-archive-upload-base)
+    (setq package-x-archive-upload-base
           (read-directory-name
            "Base directory for package archive: ")))
 
-  (if (and (not (file-directory-p package-archive-upload-base))
+  (if (and (not (file-directory-p package-x-archive-upload-base))
            (y-or-n-p (format "%s does not exist; create it? "
-                             package-archive-upload-base)))
-      (make-directory package-archive-upload-base t))
+                             package-x-archive-upload-base)))
+      (make-directory package-x-archive-upload-base t))
 
   ;; Return whether the directory exists
-  (file-directory-p package-archive-upload-base))
+  (file-directory-p package-x-archive-upload-base))
 
-(defun package-upload-buffer ()
+(defun package-x-upload-buffer ()
   "Upload the current buffer as an Emacs package.
-If `package-archive-upload-base' does not specify a valid upload
+If `package-x-archive-upload-base' does not specify a valid upload
 destination, prompt for one."
   (interactive)
   (unless (package-x--maybe-create-upload-base)
@@ -157,8 +177,8 @@ destination, prompt for one."
       (let* ((desc (package-buffer-info))
              (commentary (package-desc-commentary desc))
              (contents (package--read-archive-file
-                        (expand-file-name "archive-contents"
-                                          package-archive-upload-base))))
+                        (expand-file-name package--archive-contents-filename
+                                          package-x-archive-upload-base))))
 
         ;; Update the existing package definition or add a new one
         (let ((elt (assq (package-desc-name desc) contents)))
@@ -178,19 +198,19 @@ destination, prompt for one."
           (write-region (pp-to-string
                          (cons package-archive-version contents))
                         nil
-                        (expand-file-name "archive-contents"
-                                          package-archive-upload-base)))
+                        (expand-file-name package--archive-contents-filename
+                                          package-x-archive-upload-base)))
 
         ;; If there is a commentary section, write it.
         (when commentary
           (write-region commentary nil
                         (expand-file-name
                          (format "%-readme.txt" (package-desc-name desc))
-                         package-archive-upload-base)))
+                         package-x-archive-upload-base)))
 
         (write-region (point-min) (point-max)
                       (expand-file-name (package-desc-filename desc)
-                                        package-archive-upload-base)
+                                        package-x-archive-upload-base)
                       nil nil nil 'excl)
 
         ;; Write a news entry.
@@ -203,15 +223,15 @@ destination, prompt for one."
             (write-region (point-min) (point-max)
                           (expand-file-name
                            (concat file-name "." extension)
-                           package-archive-upload-base)
+                           package-x-archive-upload-base)
                           nil nil nil 'ask))))))
 
-(defun package-upload-file (file)
+(defun package-x-upload-file (file)
   "Upload the Emacs Lisp package FILE to the package archive.
 Interactively, prompt for FILE.  The package is considered a
 single-file package if FILE ends in \".el\", and a multi-file
 package if FILE ends in \".tar\".  If
-`package-archive-upload-base' does not specify a valid upload
+`package-x-archive-upload-base' does not specify a valid upload
 destination, prompt for one."
   (interactive "fPackage file name: ")
   (if (not (or (string-match "\\.tar$" file)
@@ -223,12 +243,19 @@ destination, prompt for one."
     (insert-file-contents-literally file)
     (package-upload-buffer)))
 
-(defun package-gnus-summary-upload ()
+(define-obsolete-function-alias 'package-upload-file 'package-x-upload-file
+  "24.4")
+
+(defun package-x-gnus-summary-upload ()
   "Upload a package contained in the current *Article* buffer.
 This should be invoked from the gnus *Summary* buffer."
   (interactive)
   (with-current-buffer gnus-article-buffer
     (package-upload-buffer)))
+
+(define-obsolete-function-alias 'package-gnus-summary-upload
+  'package-x-gnus-summary-upload
+  "24.4")
 
 (provide 'package-x)
 
