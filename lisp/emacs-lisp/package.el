@@ -438,6 +438,10 @@ E.g., if given \"quux-23.0\", will return \"quux\""
     (when (string-match (concat "\\`" package-subdirectory-regexp "\\'") name)
       (version-to-list (match-string 2 name)))))
 
+(defun package-desc-version-string (desc)
+  "Return the package version as a string."
+  (package-version-join (package-desc-version desc)))
+
 (defun package-desc-archive-url (desc)
   "Return the archive URL of DESC."
   (let* ((archive (package-desc-archive desc))
@@ -461,6 +465,16 @@ respectively."
                   (assoc kind package-kind-to-suffix-alist))))
     (unless suffix (error "No suffix for package kind %s" kind))
     (format "%s.%s" (package-desc-base-name desc) suffix)))
+
+(defun package-desc-filename-no-version (desc)
+  "Return the non-directory file name of DESC, without a version.
+This includes a suffix and is of the form \"foo.el\" or
+\"bar.tar\" for single and multi-file archives, respectively."
+  (let* ((kind (package-desc-kind desc))
+         (suffix (cdr-safe
+                  (assoc kind package-kind-to-suffix-alist))))
+    (unless suffix (error "No suffix for package kind %s" kind))
+    (format "%s.%s" (package-desc-name desc) suffix)))
 
 (defun package-desc-url (desc)
   "Return the URL from which to fetch DESC."
@@ -501,6 +515,21 @@ NAME must be a symbol."
             (package-desc-reqs desc))))))
 
 (defun package-desc-match-file-name (str)
+(defun package-desc-to-archive-format (desc &optional body-only)
+  "Return a cons cell of the form used in \"archive-contents\" files.
+This is of the form \"(foo . [(1 2 3) nil \"Package about foo\" single])\".
+
+If BODY-ONLY is non-nil, do not include the package name and
+return only the body vector."
+  (let ((vec (vector (package-desc-version desc)
+                     (package-desc-reqs desc)
+                     (package-desc-summary desc)
+                     (package-desc-kind desc))))
+    (if body-only
+        vec
+      (cons (package-desc-name desc)
+            vec))))
+
   "Return non-nil if STR is a valid package descriptor file name.
 Expects the string to be the package name.  The name must be of
 the form \"foo-1.2.3/foo-pkg.el\""
