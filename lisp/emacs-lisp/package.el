@@ -308,7 +308,7 @@ from the \"Commentary\" header in single-file packages or a
   reqs
   kind
   archive
-  (commentary ""))
+  commentary)
 
 ;; The value is precomputed in finder-inf.el, but don't load that
 ;; until it's needed (i.e. when `package-initialize' is called).
