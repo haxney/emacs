@@ -35,7 +35,10 @@
 (require 'package-x)
 (require 'ert)
 (require 'cl-lib)
-(let ((load-path (append (list (file-name-directory load-file-name)))))
+
+;; package-test is not normally in `load-path', so temporarily set
+;; `load-path' to contain the current directory.
+(let ((load-path (append (list (file-name-directory load-file-name)) load-path)))
  (require 'package-test))
 
 (defvar package-x-test--single-archive-entry-1-3
