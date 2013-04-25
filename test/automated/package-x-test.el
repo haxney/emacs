@@ -47,6 +47,12 @@
                   nil "A single-file package with no dependencies" single])
   "Expected contents of the archive entry from the \"simple-single\" package.")
 
+(defvar package-x-test--single-archive-entry-1-4
+  '(simple-single .
+                  [(1 4)
+                   nil "A single-file package with no dependencies" single])
+  "Expected contents of the archive entry from the updated \"simple-single\" package.")
+
 (cl-defmacro with-package-x-test ((&optional &key file basedir build-dir update-news) &rest body)
   "Set up temporary locations and variables for testing."
   (declare (indent 1))
@@ -100,6 +106,25 @@
                (buffer-substring (point-min) (point-max)))))
       (should (equal archive-contents
                      (list 1 package-x-test--single-archive-entry-1-3))))))
+
+(ert-deftest package-x-test-upload-new-version ()
+  "Test uploading a new version of a package"
+  (with-package-x-test (:basedir "data/package" :file "simple-single-1.3.el")
+    (package-x-upload-buffer)
+    (with-temp-buffer
+      (insert-file-contents "newer-versions/simple-single-1.4.el")
+      (package-x-upload-buffer))
+
+    (let (archive-contents)
+      (with-temp-buffer
+        (insert-file-contents
+         (expand-file-name package--archive-contents-filename
+                           package-x-archive-upload-base))
+        (setq archive-contents
+              (package-read-from-string
+               (buffer-substring (point-min) (point-max)))))
+      (should (equal archive-contents
+                     (list 1 package-x-test--single-archive-entry-1-4))))))
 
 (provide 'package-x-test)
 
