@@ -96,30 +96,26 @@
           (old-yes-no-defn (symbol-function 'yes-or-no-p))
           (old-pwd default-directory)
           package--initialized
-          ,@(if build-dir (list (list 'build-dir build-dir)
-                                (list 'build-tar (concat build-dir ".tar")))
+          ,@(if build-dir `((build-dir ,build-dir)
+                            (build-tar (concat build-dir ".tar")))
               (list (cl-gensym)))) ;; Dummy value so `let' doesn't try to bind `nil'
      (unwind-protect
          (progn
-           ,(if basedir (list 'cd basedir))
+           ,(if basedir `(cd ,basedir))
            (setf (symbol-function 'yes-or-no-p) #'(lambda (&rest r) t))
            (unless (file-directory-p package-user-dir)
              (mkdir package-user-dir))
            (if (boundp 'build-dir)
                (package-test-build-multifile build-dir))
            ,@(when install
-               (list
-                (list 'package-refresh-contents)
-                ;; The two quotes before `package-install' are required! One is
-                ;; consumed by the macro expansion and the other prevents trying to
-                ;; take the `symbol-value' of `package-install'
-                (list 'mapc ''package-install install)))
+               `((package-refresh-contents)
+                 (mapc 'package-install ,install)))
            (with-temp-buffer
              ,(if file
-                  (list 'insert-file-contents file))
+                  `(insert-file-contents ,file))
              ,@body))
        ,(if build-dir
-            (list 'package-test-cleanup-built-files build-dir))
+            `(package-test-cleanup-built-files ,build-dir))
        (when (file-directory-p package-test-user-dir)
          (delete-directory package-test-user-dir t))
        (setf (symbol-function 'yes-or-no-p) old-yes-no-defn)
