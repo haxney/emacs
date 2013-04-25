@@ -215,16 +215,7 @@ destination, prompt for one."
 
         ;; Write a news entry.
         (if package-update-news-on-upload
-            (package-maint-add-news-item desc))
-
-        ;; special-case "package": write a second copy so that the
-        ;; installer can easily find the latest version.
-        (if (string= file-name "package")
-            (write-region (point-min) (point-max)
-                          (expand-file-name
-                           (concat file-name "." extension)
-                           package-x-archive-upload-base)
-                          nil nil nil 'ask))))))
+            (package-maint-add-news-item desc))))))
 
 (defun package-x-upload-file (file)
   "Upload the Emacs Lisp package FILE to the package archive.
