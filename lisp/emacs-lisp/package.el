@@ -359,6 +359,21 @@ entry in VERSION-ALIST is (VERSION-LIST . PACKAGE-DESC).")
     (tar . "tar"))
   "An alist mapping archive kinds to the associated file suffix")
 
+(defun package-read-from-string (str)
+  "Read a Lisp expression from STR.
+Signal an error if the entire string was not used."
+  (let* ((read-data (read-from-string str))
+         (more-left
+          (condition-case nil
+              ;; The call to `ignore' suppresses a compiler warning.
+              (progn (ignore (read-from-string
+                              (substring str (cdr read-data))))
+                     t)
+            (end-of-file nil))))
+    (if more-left
+        (error "Can't read whole string")
+      (car read-data))))
+
 (defun package-parse-requires-header (requirements)
   "Parse a \"Package-Requires:\" header into version lists.
 REQUIREMENTS should be a string like ((dep-name \"1.2.3\"))."
@@ -398,6 +413,18 @@ This is, approximately, the inverse of `version-to-list'.
       (if (equal "." (car str-list))
           (pop str-list))
       (apply 'concat (nreverse str-list)))))
+
+(defun package-strip-rcs-id (str)
+  "Strip RCS version ID from the version string STR.
+If the result looks like a dotted numeric version, return it.
+Otherwise return nil."
+  (when str
+    (when (string-match "\\`[ \t]*[$]Revision:[ \t]+" str)
+      (setq str (substring str (match-end 0))))
+    (condition-case nil
+        (if (version-to-list str)
+            str)
+      (error nil))))
 
 (defun package-strip-version (dirname)
   "Strip the version from a combined package name and version.
@@ -882,7 +909,79 @@ It will move point to somewhere in the headers."
                                                        (end-of-line)
                                                        (point)))))))
 
-(defvar package--initialized nil)
+(defun package--download-one-archive (archive file)
+  "Retrieve an archive file FILE from ARCHIVE, and cache it.
+ARCHIVE should be a cons cell of the form (NAME . LOCATION),
+similar to an entry in `package-alist'.  Save the cached copy to
+\"archives/NAME/archive-contents\" in `package-user-dir'."
+  (let* ((dir (expand-file-name "archives" package-user-dir))
+         (dir (expand-file-name (car archive) dir)))
+    (package-with-downloaded-file (cdr archive) file
+                                  ;; Read the retrieved buffer to make sure it is valid (e.g. it
+                                  ;; may fetch a URL redirect page).
+                                  (when (listp (read buffer))
+                                    (make-directory dir t)
+                                    (setq buffer-file-name (expand-file-name file dir))
+                                    (let ((version-control 'never))
+                                      (save-buffer))))))
+
+(defun package--read-archive-file (file)
+  "Re-read archive file FILE, if it exists.
+Will return the data from the file, or nil if the file does not exist.
+Will throw an error if the archive version is too new."
+  (let ((filename (expand-file-name file package-user-dir)))
+    (when (file-exists-p filename)
+      (with-temp-buffer
+        (insert-file-contents-literally filename)
+        (let ((contents (read (current-buffer))))
+          (if (> (car contents) package-archive-version)
+              (error "Package archive version %d is higher than %d"
+                     (car contents) package-archive-version))
+          (cdr contents))))))
+
+(defun package-read-all-archive-contents ()
+  "Re-read `archive-contents', if it exists.
+If successful, set `package-archive-contents'."
+  (setq package-archive-contents nil)
+  (dolist (archive package-archives)
+    (package-read-archive-contents (car archive))))
+
+(defun package-read-archive-contents (archive)
+  "Re-read archive contents for ARCHIVE.
+If successful, set the variable `package-archive-contents'.
+If the archive version is too new, signal an error."
+  (let* ((dir (concat "archives/" archive))
+         (contents-file (concat dir "/archive-contents"))
+         contents)
+    (when (setq contents (package--read-archive-file contents-file))
+      (dolist (package contents)
+        (package--add-to-archive-contents package archive)))))
+
+(defun package--add-to-archive-contents (package archive)
+  "Add the PACKAGE from the given ARCHIVE if necessary.
+Also, add the originating archive to the `package-desc' structure."
+  (let* ((name (car package))
+         (pkg-desc
+          ;; These are the offsets into the "archive-contents"
+          ;; array. They are formatted this way for historical reasons
+          ;; which is why they are magic numbers here.
+          (package-desc-create :name name
+                               :version (aref (cdr package) 0)
+                               :reqs (aref (cdr package) 1)
+                               :summary (aref (cdr package) 2)
+                               :kind (aref (cdr package) 3)
+                               :archive archive))
+         (entry (cons name pkg-desc))
+         (existing-package (assq name package-archive-contents)))
+    (cond ((not existing-package)
+           (add-to-list 'package-archive-contents entry))
+          ((version-list-< (package-desc-version (cdr existing-package))
+                           (package-desc-version pkg-desc))
+           ;; Replace the entry with this one.
+           (setq package-archive-contents
+                 (cons entry
+                       (delq existing-package
+                             package-archive-contents)))))))
 
 (defun package-installed-p (name &optional min-version)
   "Return true if NAME, of MIN-VERSION or newer, is installed.
@@ -947,79 +1046,6 @@ but version %s required"
                                               pkg-desc)))))))
   package-list)
 
-(defun package-read-from-string (str)
-  "Read a Lisp expression from STR.
-Signal an error if the entire string was not used."
-  (let* ((read-data (read-from-string str))
-         (more-left
-          (condition-case nil
-              ;; The call to `ignore' suppresses a compiler warning.
-              (progn (ignore (read-from-string
-                              (substring str (cdr read-data))))
-                     t)
-            (end-of-file nil))))
-    (if more-left
-        (error "Can't read whole string")
-      (car read-data))))
-
-(defun package--read-archive-file (file)
-  "Re-read archive file FILE, if it exists.
-Will return the data from the file, or nil if the file does not exist.
-Will throw an error if the archive version is too new."
-  (let ((filename (expand-file-name file package-user-dir)))
-    (when (file-exists-p filename)
-      (with-temp-buffer
-        (insert-file-contents-literally filename)
-        (let ((contents (read (current-buffer))))
-          (if (> (car contents) package-archive-version)
-              (error "Package archive version %d is higher than %d"
-                     (car contents) package-archive-version))
-          (cdr contents))))))
-
-(defun package-read-all-archive-contents ()
-  "Re-read `archive-contents', if it exists.
-If successful, set `package-archive-contents'."
-  (setq package-archive-contents nil)
-  (dolist (archive package-archives)
-    (package-read-archive-contents (car archive))))
-
-(defun package-read-archive-contents (archive)
-  "Re-read archive contents for ARCHIVE.
-If successful, set the variable `package-archive-contents'.
-If the archive version is too new, signal an error."
-  (let* ((dir (concat "archives/" archive))
-         (contents-file (concat dir "/archive-contents"))
-         contents)
-    (when (setq contents (package--read-archive-file contents-file))
-      (dolist (package contents)
-        (package--add-to-archive-contents package archive)))))
-
-(defun package--add-to-archive-contents (package archive)
-  "Add the PACKAGE from the given ARCHIVE if necessary.
-Also, add the originating archive to the `package-desc' structure."
-  (let* ((name (car package))
-         (pkg-desc
-          ;; These are the offsets into the "archive-contents"
-          ;; array. They are formatted this way for historical reasons
-          ;; which is why they are magic numbers here.
-          (package-desc-create :name name
-                               :version (aref (cdr package) 0)
-                               :reqs (aref (cdr package) 1)
-                               :summary (aref (cdr package) 2)
-                               :kind (aref (cdr package) 3)
-                               :archive archive))
-         (entry (cons name pkg-desc))
-         (existing-package (assq name package-archive-contents)))
-    (cond ((not existing-package)
-           (add-to-list 'package-archive-contents entry))
-          ((version-list-< (package-desc-version (cdr existing-package))
-                           (package-desc-version pkg-desc))
-           ;; Replace the entry with this one.
-           (setq package-archive-contents
-                 (cons entry
-                       (delq existing-package
-                             package-archive-contents)))))))
-
 (defun package-install-desc (desc)
   "Install package described by DESC."
   (let ((kind (package-desc-kind desc)))
@@ -1052,6 +1078,8 @@ satisfied, i.e. that PKG-LIST is computed using
                                      package-user-dir)
       (package-activate elt (version-to-list v-string)))))
 
+(defvar package--initialized nil)
+
 ;;;###autoload
 (defun package-install (name)
   "Install the package named NAME.
@@ -1081,18 +1109,6 @@ archive in `package-archives'.  Interactively, prompt for NAME."
     (package-install-transaction
      (package-compute-transaction (list name)
                                   (package-desc-reqs (cdr pkg-desc))))))
-
-(defun package-strip-rcs-id (str)
-  "Strip RCS version ID from the version string STR.
-If the result looks like a dotted numeric version, return it.
-Otherwise return nil."
-  (when str
-    (when (string-match "\\`[ \t]*[$]Revision:[ \t]+" str)
-      (setq str (substring str (match-end 0))))
-    (condition-case nil
-        (if (version-to-list str)
-            str)
-      (error nil))))
 
 ;;;###autoload
 (defun package-install-file (file)
@@ -1127,22 +1143,6 @@ NAME must be a symbol and VERSION must be a version list."
       ;; Don't delete "system" packages
       (error "Package `%s-%s' is a system package, not deleting"
              name version-str)))))
-
-(defun package--download-one-archive (archive file)
-  "Retrieve an archive file FILE from ARCHIVE, and cache it.
-ARCHIVE should be a cons cell of the form (NAME . LOCATION),
-similar to an entry in `package-alist'.  Save the cached copy to
-\"archives/NAME/archive-contents\" in `package-user-dir'."
-  (let* ((dir (expand-file-name "archives" package-user-dir))
-         (dir (expand-file-name (car archive) dir)))
-    (package-with-downloaded-file (cdr archive) file
-                               ;; Read the retrieved buffer to make sure it is valid (e.g. it
-                               ;; may fetch a URL redirect page).
-                               (when (listp (read buffer))
-                                 (make-directory dir t)
-                                 (setq buffer-file-name (expand-file-name file dir))
-                                 (let ((version-control 'never))
-                                   (save-buffer))))))
 
 ;;;###autoload
 (defun package-refresh-contents ()
