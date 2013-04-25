@@ -311,13 +311,19 @@ required version.
 either `single' or `tar'.
 
 `archive' The name of the archive (as a string) whence this
-package came."
+package came.
+
+`commentary' Extended documentation of the package. This comes
+from the \"Commentary\" header in single-file packages or a
+\"foo-readme.txt\" file in multi-file packages."
+
   name
   version
   (summary "No description available.")
   reqs
   kind
-  archive)
+  archive
+  (commentary ""))
 
 ;; The value is precomputed in finder-inf.el, but don't load that
 ;; until it's needed (i.e. when `package-initialize' is called).
@@ -624,10 +630,13 @@ boundaries."
                   (package-strip-rcs-id (lm-header "version"))))
              (commentary (lm-commentary)))
         (unless pkg-version
-          (error
-           "Package lacks a \"Version\" or \"Package-Version\" header"))
-        (package-desc-from-define
-         file-name pkg-version summary requires-str :kind 'single)))))
+          (error "Package lacks a \"Version\" or \"Package-Version\" header"))
+        (package-desc-from-define file-name
+                                  pkg-version
+                                  summary
+                                  requires-str
+                                  :kind 'single
+                                  :commentary commentary)))))
 
 (defun package-read-defined (file-name pkg-dir)
   "Read a `define-package' from FILE-NAME, a \"foo-pkg.el\" file.
