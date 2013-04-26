@@ -146,6 +146,14 @@
        (setf (symbol-function 'yes-or-no-p) old-yes-no-defn)
        (cd old-pwd))))
 
+(defmacro with-fake-help-buffer (&rest body)
+  "Execute BODY in a temp buffer which is treated as the \"*Help*\" buffer."
+  `(with-temp-buffer
+    (help-mode)
+    ;; Trick `help-buffer' into using the temp buffer.
+    (let ((help-xref-following t))
+      ,@body)))
+
 (defun package-test-install-texinfo (file)
   "Install from texinfo FILE.
 
@@ -222,18 +230,26 @@ Must called from within a `tar-mode' buffer."
   "Install a single file without using an archive."
   (with-package-test (:basedir "data/package" :file "simple-single-1.3.el")
     (should (package-install-single))
+    (package-initialize)
+    (should (package-installed-p 'simple-single))
     (let* ((simple-pkg-dir (file-name-as-directory
                             (expand-file-name
                              "simple-single-1.3"
                              package-test-user-dir)))
-           (autoloads-file (expand-file-name "simple-single-autoloads.el" simple-pkg-dir)))
+           (autoloads-file (expand-file-name "simple-single-autoloads.el"
+                                             simple-pkg-dir)))
       (should (file-directory-p simple-pkg-dir))
       (with-temp-buffer
-        (insert-file-contents (expand-file-name "simple-single-pkg.el" simple-pkg-dir))
+        (insert-file-contents (expand-file-name "simple-single-pkg.el"
+                                                simple-pkg-dir))
         (should (string= (buffer-string)
-                         "(define-package \"simple-single\" \"1.3\" \"A single-file package with no dependencies\" nil)\n")))
+                         (concat "(define-package \"simple-single\" \"1.3\" "
+                                 "\"A single-file package "
+                                 "with no dependencies\" nil)\n"))))
       (should (file-exists-p autoloads-file))
-      (should-not (get-file-buffer autoloads-file)))))
+      (should-not (get-file-buffer autoloads-file))
+      (should (string= (package-desc-get-readme (cdr (assq 'simple-single package--alist)))
+                       (package-desc-commentary simple-single-desc))))))
 
 (ert-deftest package-test-install-dependency ()
   "Install a package which includes a dependency."
@@ -337,6 +353,40 @@ Must called from within a `tar-mode' buffer."
         (package-menu-execute)
         (package-menu-refresh)
         (should (package-installed-p 'simple-single '(1 4)))))))
+
+(ert-deftest package-test-describe-package ()
+  "Test displaying help for a package."
+
+  (require 'finder-inf)
+  ;; Built-in
+  (with-fake-help-buffer
+   (describe-package '5x5)
+   (goto-char (point-min))
+   (should (search-forward "5x5 is a built-in package." nil t))
+   (should (search-forward "Status: Built-in." nil t))
+   (should (search-forward "Summary: simple little puzzle game" nil t))
+   (should (search-forward "The aim of 5x5" nil t)))
+
+  ;; Installed
+  (with-package-test ()
+    (package-refresh-contents)
+    (package-install 'simple-single)
+    (let ((desc (cdr (assq 'simple-single package--alist))))
+      (with-fake-help-buffer
+       (describe-package 'simple-single)
+       (goto-char (point-min))
+       (should (search-forward "simple-single is an installed package." nil t))
+       (should (search-forward
+                (format "Status: Installed in `%s/'."
+                        (package-desc-install-dir-actual desc)) nil t))
+       (should (search-forward (format "Version: %s"
+                                       (package-desc-version-string desc)) nil t))
+       (message "communism is %s" (package-desc-commentary desc))
+       (should (search-forward (format "Summary: %s"
+                                       (package-desc-summary desc)) nil t))
+       (should (search-forward (package-desc-commentary desc) nil t))
+
+       ))))
 
 (provide 'package-test)
 
