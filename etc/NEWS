@@ -260,6 +260,37 @@ alist of extended attributes as returned by the new function
 `file-extended-attributes'.  The attributes can be applied to another
 file using `set-file-extended-attributes'.
 
+** Total refactor of package.el
+package.el has been overhauled to make the internals cleaner and more
+consistent.  User-facing commands have not changed and existing
+archives and files will continue to work as before; only lisp code
+which interfaces with package.el directly is impacted.
+
+*** New `package-desc' structure
+
+Packages are now represented internally as `package-desc' structures,
+defined using `cl-defstruc'.  This consolidates the numerous internal
+representations of package metadata so that all functions access
+package data in the same way.
+
+There are a number of convenience functions in addition to the basic
+slot access functions, all of which are prefixed with `package-desc-*'
+
+*** Removal of `define-package'
+
+`package-desc' structures are extracted from "foo-pkg.el" files
+without executing a `define-package' function directly.  The on-disk
+format of "foo-pkg.el" files has not changed.
+
+*** Extraction of `package-desc' structures from files
+
+`package-desc' structures are extracted from files using
+`package-desc-from-buffer', which replaces the old
+`package-buffer-info'. The same function is used for both single elisp
+files as well as tar packages. `tar-mode' is used to extract
+"foo-pkg.el" and "README" files and there is no dependency on an
+external "tar" command.
+
 
 * Lisp Changes in Emacs 24.4
 
