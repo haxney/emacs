@@ -540,8 +540,7 @@ For other packages, it tries the following steps:
             (opoint (point)))
         (or (package--strip-commentary (lm-commentary fn)) ""))
 
-    (let (readme-file
-          readme-string)
+    (let (readme-file)
       ;; For elpa packages, try an existing readme file in
       ;; `package-user-dir'. If that fails, try downloading the
       ;; commentary.
@@ -565,9 +564,8 @@ For other packages, it tries the following steps:
                      (format package-readme-file-format package-name)
                    (write-region nil nil (expand-file-name readme-file
                                                            package-user-dir))
-                   (setq readme-string (buffer-string)))
-               (error nil))
-             readme-string)
+                   (buffer-string))
+               (error "")))
             (t "")))))
 
 (defun package-archive-base (name)
