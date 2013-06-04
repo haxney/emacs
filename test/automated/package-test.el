@@ -371,7 +371,7 @@ Must called from within a `tar-mode' buffer."
   (with-package-test ()
     (package-refresh-contents)
     (package-install 'simple-single)
-    (let ((desc (cdr (assq 'simple-single package--alist))))
+    (let ((desc simple-single-desc))
       (with-fake-help-buffer
        (describe-package 'simple-single)
        (goto-char (point-min))
@@ -381,12 +381,9 @@ Must called from within a `tar-mode' buffer."
                         (package-desc-install-dir-actual desc)) nil t))
        (should (search-forward (format "Version: %s"
                                        (package-desc-version-string desc)) nil t))
-       (message "communism is %s" (package-desc-commentary desc))
        (should (search-forward (format "Summary: %s"
                                        (package-desc-summary desc)) nil t))
-       (should (search-forward (package-desc-commentary desc) nil t))
-
-       ))))
+       (should (search-forward (package-desc-commentary desc) nil t))))))
 
 (provide 'package-test)
 
