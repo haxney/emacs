@@ -547,7 +547,7 @@ For other packages, it tries the following steps:
       (cond ((file-readable-p
               (setq readme-file (package-desc-installed-readme-file desc)))
              (with-temp-buffer
-               (insert-file-contents readme-installed)
+               (insert-file-contents readme-file)
                (buffer-string)))
 
             ((file-readable-p
@@ -1002,7 +1002,8 @@ Includes any dependencies."
          (transaction (package--compute-transaction nil requires))
          (pkg-dir (package-desc-user-install-dir desc))
          (el-file (expand-file-name (format "%s.el" name) pkg-dir))
-         (pkg-file (package-desc-descriptor-file desc)))
+         (pkg-file (package-desc-descriptor-file desc))
+         (readme-file (expand-file-name package-readme-installed-file pkg-dir)))
     ;; Special case "package". Should this still be supported?
     (if (eq name 'package)
         (package--write-file-no-coding
@@ -1014,6 +1015,14 @@ Includes any dependencies."
         (delete-directory pkg-dir t))
       (make-directory pkg-dir t)
       (package--write-file-no-coding el-file 'excl)
+
+      ;; Write a README file if the package has commentary
+      (if (and (stringp (package-desc-commentary desc))
+               (> (length (package-desc-commentary desc)) 0))
+          (with-temp-buffer
+            (insert (package-desc-commentary desc))
+            (package--write-file-no-coding readme-file 'excl)))
+
       (with-temp-file pkg-file
         (insert (package-desc-to-string desc) "\n"))
       (package--make-autoloads-and-compile desc))))
