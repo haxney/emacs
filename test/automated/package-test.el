@@ -43,45 +43,52 @@
   "Directory of the actual \"package-test.el\" file.")
 
 (defvar simple-single-desc
-  `[cl-struct-package-desc simple-single (1 3)
-                           "A single-file package with no dependencies"
-                           nil single nil
-                           ,(concat
-                             "This package provides a minor mode to frobnicate "
-                             "and/or bifurcate\nany flanges you desire. "
-                             "To activate it, type \"C-M-r M-3 butterfly\"\n"
-                             "and all your dreams will come true.\n")]
+  `(:name simple-single
+          :version (1 3)
+          :summary "A single-file package with no dependencies"
+          :kind single
+          :commentary ,(concat
+                        "This package provides a minor mode to frobnicate "
+                        "and/or bifurcate\nany flanges you desire. "
+                        "To activate it, type \"C-M-r M-3 butterfly\"\n"
+                        "and all your dreams will come true.\n"))
   "Expected `package-desc' parsed from simple-single-1.3.el.")
 
 (defvar simple-single-desc-1-4
-  `[cl-struct-package-desc simple-single (1 4)
-                           "A single-file package with no dependencies"
-                           nil single nil
-                           ,(concat
-                             "This package provides a minor mode to frobnicate "
-                             "and/or bifurcate\nany flanges you desire. "
-                             "To activate it, type \"C-M-r M-3 butterfly\"\n"
-                             "and all your dreams will come true.\n"
-                             "\nThis is a new, updated version.\n")]
+  `(:name simple-single
+          :version (1 4)
+          :summary "A single-file package with no dependencies"
+          :kind single
+          :commentary ,(concat
+                        "This package provides a minor mode to frobnicate "
+                        "and/or bifurcate\nany flanges you desire. "
+                        "To activate it, type \"C-M-r M-3 butterfly\"\n"
+                        "and all your dreams will come true.\n"
+                        "\nThis is a new, updated version.\n"))
   "Expected `package-desc' parsed from simple-single-1.4.el.")
 
 (defvar simple-depend-desc
-  [cl-struct-package-desc simple-depend (1 0)
-                          "A single-file package with a dependency."
-                          ((simple-single (1 3))) single nil
-                          "Depends on another package.\n"]
+  '(:name simple-depend
+          :version (1 0)
+          :summary "A single-file package with a dependency."
+          :reqs ((simple-single (1 3)))
+          :kind single
+          :commentary "Depends on another package.\n")
   "Expected `package-desc' parsed from simple-depend-1.0.el.")
 
 (defvar multi-file-desc
-  [cl-struct-package-desc multi-file (0 2 3)
-                          "Example of a multi-file tar package"
-                          nil tar nil
-                          "This is a bare-bones readme file for the multi-file package.\n"]
+  '(:name multi-file
+          :version (0 2 3)
+          :summary "Example of a multi-file tar package"
+          :kind tar
+          :commentary "This is a bare-bones readme file for the multi-file package.\n")
   "Expected `package-desc' from \"multi-file-0.2.3.tar\".")
 
-(defvar new-pkg-desc [cl-struct-package-desc new-pkg (1 0)
-                                             "A package only seen after \"updating\" archive-contents"
-                                             nil single nil]
+(defvar new-pkg-desc
+  '(:name new-pkg
+          :version (1 0)
+          :summary "A package only seen after \"updating\" archive-contents"
+          :kind single)
   "Expected `package-desc' parsed from new-pkg-1.0.el.")
 
 (defvar package-test-data-dir (expand-file-name "data/package" package-test-file-dir)

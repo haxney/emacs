@@ -263,51 +263,83 @@ contrast, `package-user-dir' contains packages for personal use."
   :group 'package
   :version "24.1")
 
-(cl-defstruct (package-desc
-               ;; Rename the default constructor from `make-package-desc'.
-               (:constructor package-desc-create)
-               ;; Has the same interface as the old `define-package',
-               ;; which is still used in the "foo-pkg.el" files. Extra
-               ;; options can be supported by adding additional keys.
-               (:constructor
-                package-desc-from-define
-                (name-string version-string &optional summary requirements
-                             &key kind archive commentary
-                             &aux (name (intern name-string))
-                             (version (version-to-list version-string))
-                             (reqs (package-parse-requires-header requirements)))))
-  "Structure containing information about an individual package.
+(defconst package-desc-builtin-props
+  '(name version summary reqs kind archive commentary)
+  "Built-in properties for `package-desc' structures.
+This is the non-keyword name of the properties. In the actual
+`package-desc' structure, the property symbols are keywords.")
 
-Slots:
+(defun keywordize (sym)
+  "Make SYM into a keyword symbol."
+  (intern (format ":%s" sym)))
 
-`name' Name of the package, as a symbol.
+(cl-defun package-desc-create (&key name
+                                    version
+                                    (summary "No description available.")
+                                    reqs
+                                    kind
+                                    archive
+                                    (commentary ""))
+  "Creates a `package-desc' plist with the following properties:
 
-`version' Version of the package, as a version list.
+`name' Name of the package, as a symbol. (Required)
+
+`version' Version of the package, as a version list. (Required)
 
 `summary' Short description of the package, typically taken from
-the first line of the file.
+the first line of the file. (Optional)
 
 `reqs' Requirements of the package. A list of (PACKAGE
 VERSION-LIST) naming the dependent package and the minimum
-required version.
+required version. (Optional)
 
 `kind' The distribution format of the package. Currently, it is
-either `single' or `tar'.
+either `single' or `tar'. (Required)
 
 `archive' The name of the archive (as a string) whence this
-package came.
+package came. (Optional)
 
 `commentary' Extended documentation of the package. This comes
 from the \"Commentary\" header in single-file packages or a
-\"foo-readme.txt\" file in multi-file packages."
+\"foo-readme.txt\" file in multi-file packages. (Optional)
+"
+  (let (desc)
+    (dolist (prop package-desc-builtin-props)
+      (unless (null (symbol-value prop))
+        (setq desc (plist-put desc (keywordize prop) (symbol-value prop)))))
+    desc))
 
-  name
-  version
-  (summary "No description available.")
-  reqs
-  kind
-  archive
-  commentary)
+(declare-function package-desc-version "package.el" (desc))
+(declare-function package-desc-archive "package.el" (desc))
+(declare-function package-desc-name "package.el" (desc))
+(declare-function package-desc-kind "package.el" (desc))
+(declare-function package-desc-summary "package.el" (desc))
+(declare-function package-desc-reqs "package.el" (desc))
+(declare-function package-desc-commentary "package.el" (desc))
+
+;; Create accessor functions.
+(dolist (prop package-desc-builtin-props)
+  (let ((func-name (intern (format "package-desc-%s" prop))))
+    (fset func-name
+          `(lambda (desc)
+             ,(format "Get the value of the :%s property of DESC." prop)
+             (plist-get desc ,(keywordize prop))))
+ )
+  )
+
+(cl-defun package-desc-from-define (name-string version-string &optional summary requirements
+                                                &key kind archive commentary
+                                                &aux (name (intern name-string))
+                                                (version (version-to-list version-string))
+                                                (reqs (package-parse-requires-header requirements)))
+  "Create a `package-desc' from a `define-package' definition."
+  (package-desc-create :name name
+                       :version version
+                       :summary summary
+                       :reqs reqs
+                       :kind kind
+                       :archive archive
+                       :commentary commentary))
 
 ;; The value is precomputed in finder-inf.el, but don't load that
 ;; until it's needed (i.e. when `package-initialize' is called).
@@ -479,6 +511,11 @@ This includes a suffix and is of the form \"foo.el\" or
         (archive-url (package-desc-archive-url desc)))
     (concat archive-url base-name)))
 
+(defun package-archive-base (name)
+  "Return the archive URL containing the package NAME.
+NAME must be a symbol."
+  (package-desc-archive-url (cdr (assq name package--archive-contents))))
+
 (defun package-desc-user-install-dir (desc)
   "Return the expected user install directory of DESC.
 This is the package name within `package-user-dir'. No check is
@@ -533,45 +570,41 @@ For other packages, it tries the following steps:
  - Try to download a readme from the archive.
 
  - Return an empty string"
-  (if (assq (package-desc-name desc) package--builtins)
-      ;; For built-in packages, insert the commentary.
-      (let ((fn (locate-file (format "%s.el" package-name) load-path
-                             load-file-rep-suffixes))
-            (opoint (point)))
-        (or (package--strip-commentary (lm-commentary fn)) ""))
+  (let ((pkg-name (package-desc-name desc)))
+   (if (assq pkg-name package--builtins)
+       ;; For built-in packages, insert the commentary.
+       (let ((fn (locate-file (format "%s.el" pkg-name) load-path
+                              load-file-rep-suffixes))
+             (opoint (point)))
+         (or (package--strip-commentary (lm-commentary fn)) ""))
 
-    (let (readme-file)
-      ;; For elpa packages, try an existing readme file in
-      ;; `package-user-dir'. If that fails, try downloading the
-      ;; commentary.
-      (cond ((file-readable-p
-              (setq readme-file (package-desc-installed-readme-file desc)))
-             (with-temp-buffer
-               (insert-file-contents readme-file)
-               (buffer-string)))
+     (let (readme-file)
+       ;; For elpa packages, try an existing readme file in
+       ;; `package-user-dir'. If that fails, try downloading the
+       ;; commentary.
+       (cond ((file-readable-p
+               (setq readme-file (package-desc-installed-readme-file desc)))
+              (with-temp-buffer
+                (insert-file-contents readme-file)
+                (buffer-string)))
 
-            ((file-readable-p
-              (setq readme-file
-                    (expand-file-name (package-desc-readme-file desc)
-                                      package-user-dir)))
-             (with-temp-buffer
-               (insert-file-contents readme-file)
-               (buffer-string)))
+             ((file-readable-p
+               (setq readme-file
+                     (expand-file-name (package-desc-readme-file desc)
+                                       package-user-dir)))
+              (with-temp-buffer
+                (insert-file-contents readme-file)
+                (buffer-string)))
 
-            ((condition-case nil
-                 (package--with-downloaded-file
-                     (package-archive-base package)
-                     (format package-readme-file-format package-name)
+             ((condition-case nil
+                  (package--with-downloaded-file
+                   (package-archive-base pkg-name)
+                   (format package-readme-file-format pkg-name)
                    (write-region nil nil (expand-file-name readme-file
                                                            package-user-dir))
                    (buffer-string))
-               (error "")))
-            (t "")))))
-
-(defun package-archive-base (name)
-  "Return the archive URL containing the package NAME.
-NAME must be a symbol."
-  (package-desc-archive-url (cdr (assq name package--archive-contents))))
+                (error "")))
+             (t ""))))))
 
 (defun package-desc-to-string (desc)
   "Return a string representation of package DESC."
@@ -703,8 +736,7 @@ boundaries."
           (error "No package descriptor file found."))
         (setq pkg-def-parsed (package-read-from-string descriptor-contents))
         (unless (eq (car pkg-def-parsed) 'define-package)
-          (error "No `define-package' sexp is present in `%s-%s.el'"
-                 pkg-name (package-version-join pkg-version)))
+          (error "No `define-package' sexp is present in descriptor file."))
         (apply #'package-desc-from-define
                (append (cdr pkg-def-parsed)
                        '(:kind tar)
