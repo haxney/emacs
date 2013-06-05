@@ -269,10 +269,6 @@ contrast, `package-user-dir' contains packages for personal use."
 This is the non-keyword name of the properties. In the actual
 `package-desc' structure, the property symbols are keywords.")
 
-(defun keywordize (sym)
-  "Make SYM into a keyword symbol."
-  (intern (format ":%s" sym)))
-
 (cl-defun package-desc-create (&key name
                                     version
                                     (summary "No description available.")
@@ -306,7 +302,7 @@ from the \"Commentary\" header in single-file packages or a
   (let (desc)
     (dolist (prop package-desc-builtin-props)
       (unless (null (symbol-value prop))
-        (setq desc (plist-put desc (keywordize prop) (symbol-value prop)))))
+        (setq desc (plist-put desc (intern (format ":%s" prop)) (symbol-value prop)))))
     desc))
 
 (declare-function package-desc-version "package.el" (desc))
@@ -319,13 +315,17 @@ from the \"Commentary\" header in single-file packages or a
 
 ;; Create accessor functions.
 (dolist (prop package-desc-builtin-props)
-  (let ((func-name (intern (format "package-desc-%s" prop))))
-    (fset func-name
-          `(lambda (desc)
-             ,(format "Get the value of the :%s property of DESC." prop)
-             (plist-get desc ,(keywordize prop))))
- )
-  )
+  (let ((func-name (intern (format "package-desc-%s" prop)))
+        (prop-name (intern (format ":%s" prop))))
+    (eval (macroexpand
+           `(defsubst ,func-name (desc)
+              ,(format "Get the value of the :%s property of DESC." prop)
+              (plist-get desc ,prop-name))))
+    (eval (macroexpand
+           `(gv-define-setter ,func-name (val x)
+              ;; This quoting weirdness works, though I'm not sure
+              ;; why. Take a look at gv.el.
+              `(plist-put ,x ,',prop-name ,val))))))
 
 (cl-defun package-desc-from-define (name-string version-string &optional summary requirements
                                                 &key kind archive commentary
