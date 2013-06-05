@@ -279,7 +279,7 @@ This is the non-keyword name of the properties. In the actual
                                     reqs
                                     kind
                                     archive
-                                    (commentary ""))
+                                    commentary)
   "Creates a `package-desc' plist with the following properties:
 
 `name' Name of the package, as a symbol. (Required)
