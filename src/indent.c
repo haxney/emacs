@@ -56,11 +56,6 @@ static EMACS_INT last_known_column_modified;
 static ptrdiff_t current_column_1 (void);
 static ptrdiff_t position_indentation (ptrdiff_t);
 
-/* Cache of beginning of line found by the last call of
-   current_column. */
-
-static ptrdiff_t current_column_bol_cache;
-
 /* Get the display table to use for the current buffer.  */
 
 struct Lisp_Char_Table *
@@ -254,7 +249,7 @@ skip_invisible (ptrdiff_t pos, ptrdiff_t *next_boundary_p, ptrdiff_t to, Lisp_Ob
      the next property change */
   prop = Fget_char_property (position, Qinvisible,
 			     (!NILP (window)
-			      && EQ (XWINDOW (window)->buffer, buffer))
+			      && EQ (XWINDOW (window)->contents, buffer))
 			     ? window : buffer);
   inv_p = TEXT_PROP_MEANS_INVISIBLE (prop);
   /* When counting columns (window == nil), don't skip over ellipsis text.  */
@@ -439,11 +434,6 @@ current_column (void)
       col += post_tab;
     }
 
-  if (ptr == BEGV_ADDR)
-    current_column_bol_cache = BEGV;
-  else
-    current_column_bol_cache = BYTE_TO_CHAR (PTR_BYTE_POS (ptr));
-
   last_known_column = col;
   last_known_column_point = PT;
   last_known_column_modified = MODIFF;
@@ -525,7 +515,6 @@ scan_for_column (ptrdiff_t *endpos, EMACS_INT *goalcol, ptrdiff_t *prevcol)
   {
   ptrdiff_t opoint = PT, opoint_byte = PT_BYTE;
   scan_newline (PT, PT_BYTE, BEGV, BEGV_BYTE, -1, 1);
-  current_column_bol_cache = PT;
   scan = PT, scan_byte = PT_BYTE;
   SET_PT_BOTH (opoint, opoint_byte);
   next_boundary = scan;
@@ -1088,8 +1077,8 @@ static struct position val_compute_motion;
 	    : (window_width + window_left != frame_cols))
 
 	where
-	  window_width is XFASTINT (w->total_cols),
-	  window_left is XFASTINT (w->left_col),
+	  window_width is w->total_cols,
+	  window_left is w->left_col,
 	  has_vertical_scroll_bars is
 	    WINDOW_HAS_VERTICAL_SCROLL_BAR (window)
 	  and frame_cols = FRAME_COLS (XFRAME (window->frame))
@@ -1102,8 +1091,8 @@ static struct position val_compute_motion;
    the scroll bars if they are turned on.  */
 
 struct position *
-compute_motion (ptrdiff_t from, EMACS_INT fromvpos, EMACS_INT fromhpos,
-		bool did_motion, ptrdiff_t to,
+compute_motion (ptrdiff_t from, ptrdiff_t frombyte, EMACS_INT fromvpos,
+		EMACS_INT fromhpos, bool did_motion, ptrdiff_t to,
 		EMACS_INT tovpos, EMACS_INT tohpos, EMACS_INT width,
 		ptrdiff_t hscroll, int tab_offset, struct window *win)
 {
@@ -1186,8 +1175,11 @@ compute_motion (ptrdiff_t from, EMACS_INT fromvpos, EMACS_INT fromhpos,
   immediate_quit = 1;
   QUIT;
 
+  /* It's just impossible to be too paranoid here.  */
+  eassert (from == BYTE_TO_CHAR (frombyte) && frombyte == CHAR_TO_BYTE (from));
+
   pos = prev_pos = from;
-  pos_byte = prev_pos_byte = CHAR_TO_BYTE (from);
+  pos_byte = prev_pos_byte = frombyte;
   contin_hpos = 0;
   prev_tab_offset = tab_offset;
   memset (&cmp_it, 0, sizeof cmp_it);
@@ -1724,7 +1716,8 @@ of a certain window, pass the window's starting location as FROM
 and the window's upper-left coordinates as FROMPOS.
 Pass the buffer's (point-max) as TO, to limit the scan to the end of the
 visible section of the buffer, and pass LINE and COL as TOPOS.  */)
-  (Lisp_Object from, Lisp_Object frompos, Lisp_Object to, Lisp_Object topos, Lisp_Object width, Lisp_Object offsets, Lisp_Object window)
+  (Lisp_Object from, Lisp_Object frompos, Lisp_Object to, Lisp_Object topos,
+   Lisp_Object width, Lisp_Object offsets, Lisp_Object window)
 {
   struct window *w;
   Lisp_Object bufpos, hpos, vpos, prevhpos;
@@ -1767,7 +1760,8 @@ visible section of the buffer, and pass LINE and COL as TOPOS.  */)
   if (XINT (to) < BEGV || XINT (to) > ZV)
     args_out_of_range_3 (to, make_number (BEGV), make_number (ZV));
 
-  pos = compute_motion (XINT (from), XINT (XCDR (frompos)),
+  pos = compute_motion (XINT (from), CHAR_TO_BYTE (XINT (from)),
+			XINT (XCDR (frompos)),
 			XINT (XCAR (frompos)), 0,
 			XINT (to),
 			(NILP (topos)
@@ -1789,28 +1783,23 @@ visible section of the buffer, and pass LINE and COL as TOPOS.  */)
   XSETINT (vpos, pos->vpos);
   XSETINT (prevhpos, pos->prevhpos);
 
-  return Fcons (bufpos,
-		Fcons (hpos,
-		       Fcons (vpos,
-			      Fcons (prevhpos,
-				     Fcons (pos->contin ? Qt : Qnil, Qnil)))));
-
+  return list5 (bufpos, hpos, vpos, prevhpos, pos->contin ? Qt : Qnil);
 }
-
-/* Fvertical_motion and vmotion */
+
+/* Fvertical_motion and vmotion.  */
 
 static struct position val_vmotion;
 
 struct position *
-vmotion (register ptrdiff_t from, register EMACS_INT vtarget, struct window *w)
+vmotion (register ptrdiff_t from, register ptrdiff_t from_byte,
+	 register EMACS_INT vtarget, struct window *w)
 {
   ptrdiff_t hscroll = w->hscroll;
   struct position pos;
-  /* vpos is cumulative vertical position, changed as from is changed */
+  /* VPOS is cumulative vertical position, changed as from is changed.  */
   register EMACS_INT vpos = 0;
   ptrdiff_t prevline;
   register ptrdiff_t first;
-  ptrdiff_t from_byte;
   ptrdiff_t lmargin = hscroll > 0 ? 1 - hscroll : 0;
   ptrdiff_t selective
     = (INTEGERP (BVAR (current_buffer, selective_display))
@@ -1826,7 +1815,7 @@ vmotion (register ptrdiff_t from, register EMACS_INT vtarget, struct window *w)
 
   /* If the window contains this buffer, use it for getting text properties.
      Otherwise use the current buffer as arg for doing that.  */
-  if (EQ (w->buffer, Fcurrent_buffer ()))
+  if (EQ (w->contents, Fcurrent_buffer ()))
     text_prop_object = window;
   else
     text_prop_object = Fcurrent_buffer ();
@@ -1840,10 +1829,13 @@ vmotion (register ptrdiff_t from, register EMACS_INT vtarget, struct window *w)
 
       while ((vpos > vtarget || first) && from > BEGV)
 	{
-	  ptrdiff_t bytepos;
+	  ptrdiff_t bytepos = from_byte;
 	  Lisp_Object propval;
 
-	  prevline = find_next_newline_no_quit (from - 1, -1, &bytepos);
+	  prevline = from;
+	  DEC_BOTH (prevline, bytepos);
+	  prevline = find_newline_no_quit (prevline, bytepos, -1, &bytepos);
+
 	  while (prevline > BEGV
 		 && ((selective > 0
 		      && indented_beyond_p (prevline, bytepos, selective))
@@ -1853,30 +1845,28 @@ vmotion (register ptrdiff_t from, register EMACS_INT vtarget, struct window *w)
 						       Qinvisible,
 						       text_prop_object),
 			 TEXT_PROP_MEANS_INVISIBLE (propval))))
-	    prevline = find_next_newline_no_quit (prevline - 1, -1, &bytepos);
-	  pos = *compute_motion (prevline, 0,
-				 lmargin,
-				 0,
-				 from,
+	    {
+	      DEC_BOTH (prevline, bytepos);
+	      prevline = find_newline_no_quit (prevline, bytepos, -1, &bytepos);
+	    }
+	  pos = *compute_motion (prevline, bytepos, 0, lmargin, 0, from,
 				 /* Don't care for VPOS...  */
 				 1 << (BITS_PER_SHORT - 1),
 				 /* ... nor HPOS.  */
 				 1 << (BITS_PER_SHORT - 1),
-				 -1, hscroll,
-				 0,
-				 w);
+				 -1, hscroll, 0, w);
 	  vpos -= pos.vpos;
 	  first = 0;
 	  from = prevline;
+	  from_byte = bytepos;
 	}
 
-      /* If we made exactly the desired vertical distance,
-	 or if we hit beginning of buffer,
-	 return point found */
+      /* If we made exactly the desired vertical distance, or
+	 if we hit beginning of buffer, return point found.  */
       if (vpos >= vtarget)
 	{
 	  val_vmotion.bufpos = from;
-	  val_vmotion.bytepos = CHAR_TO_BYTE (from);
+	  val_vmotion.bytepos = from_byte;
 	  val_vmotion.vpos = vpos;
 	  val_vmotion.hpos = lmargin;
 	  val_vmotion.contin = 0;
@@ -1884,17 +1874,18 @@ vmotion (register ptrdiff_t from, register EMACS_INT vtarget, struct window *w)
 	  return &val_vmotion;
 	}
 
-      /* Otherwise find the correct spot by moving down */
+      /* Otherwise find the correct spot by moving down.  */
     }
-  /* Moving downward is simple, but must calculate from beg of line
-     to determine hpos of starting point */
-  from_byte = CHAR_TO_BYTE (from);
+
+  /* Moving downward is simple, but must calculate from
+     beg of line to determine hpos of starting point.  */
+
   if (from > BEGV && FETCH_BYTE (from_byte - 1) != '\n')
     {
       ptrdiff_t bytepos;
       Lisp_Object propval;
 
-      prevline = find_next_newline_no_quit (from, -1, &bytepos);
+      prevline = find_newline_no_quit (from, from_byte, -1, &bytepos);
       while (prevline > BEGV
 	     && ((selective > 0
 		  && indented_beyond_p (prevline, bytepos, selective))
@@ -1904,18 +1895,16 @@ vmotion (register ptrdiff_t from, register EMACS_INT vtarget, struct window *w)
 						   Qinvisible,
 						   text_prop_object),
 		     TEXT_PROP_MEANS_INVISIBLE (propval))))
-	prevline = find_next_newline_no_quit (prevline - 1, -1, &bytepos);
-      pos = *compute_motion (prevline, 0,
-			     lmargin,
-			     0,
-			     from,
+	{
+	  DEC_BOTH (prevline, bytepos);
+	  prevline = find_newline_no_quit (prevline, bytepos, -1, &bytepos);
+	}
+      pos = *compute_motion (prevline, bytepos, 0, lmargin, 0, from,
 			     /* Don't care for VPOS...  */
 			     1 << (BITS_PER_SHORT - 1),
 			     /* ... nor HPOS.  */
 			     1 << (BITS_PER_SHORT - 1),
-			     -1, hscroll,
-			     0,
-			     w);
+			     -1, hscroll, 0, w);
       did_motion = 1;
     }
   else
@@ -1924,11 +1913,9 @@ vmotion (register ptrdiff_t from, register EMACS_INT vtarget, struct window *w)
       pos.vpos = 0;
       did_motion = 0;
     }
-  return compute_motion (from, vpos, pos.hpos, did_motion,
+  return compute_motion (from, from_byte, vpos, pos.hpos, did_motion,
 			 ZV, vtarget, - (1 << (BITS_PER_SHORT - 1)),
-			 -1, hscroll,
-			 0,
-			 w);
+			 -1, hscroll, 0, w);
 }
 
 DEFUN ("vertical-motion", Fvertical_motion, Svertical_motion, 1, 2, 0,
@@ -1981,21 +1968,21 @@ whether or not it is currently displayed in some window.  */)
 
   old_buffer = Qnil;
   GCPRO1 (old_buffer);
-  if (XBUFFER (w->buffer) != current_buffer)
+  if (XBUFFER (w->contents) != current_buffer)
     {
       /* Set the window's buffer temporarily to the current buffer.  */
-      old_buffer = w->buffer;
+      old_buffer = w->contents;
       old_charpos = marker_position (w->pointm);
       old_bytepos = marker_byte_position (w->pointm);
       wset_buffer (w, Fcurrent_buffer ());
-      set_marker_both (w->pointm, w->buffer,
+      set_marker_both (w->pointm, w->contents,
 		       BUF_PT (current_buffer), BUF_PT_BYTE (current_buffer));
     }
 
   if (noninteractive)
     {
       struct position pos;
-      pos = *vmotion (PT, XINT (lines), w);
+      pos = *vmotion (PT, PT_BYTE, XINT (lines), w);
       SET_PT_BOTH (pos.bufpos, pos.bytepos);
     }
   else
@@ -2019,11 +2006,15 @@ whether or not it is currently displayed in some window.  */)
 	  const char *s = SSDATA (it.string);
 	  const char *e = s + SBYTES (it.string);
 
+	  disp_string_at_start_p =
 	  /* If it.area is anything but TEXT_AREA, we need not bother
 	     about the display string, as it doesn't affect cursor
 	     positioning.  */
-	  disp_string_at_start_p =
-	    it.string_from_display_prop_p && it.area == TEXT_AREA;
+	    it.area == TEXT_AREA
+	    && it.string_from_display_prop_p
+	    /* A display string on anything but buffer text (e.g., on
+	       an overlay string) doesn't affect cursor positioning.  */
+	    && (it.sp > 0 && it.stack[it.sp - 1].method == GET_FROM_BUFFER);
 	  while (s < e)
 	    {
 	      if (*s++ == '\n')
@@ -2141,7 +2132,7 @@ whether or not it is currently displayed in some window.  */)
   if (BUFFERP (old_buffer))
     {
       wset_buffer (w, old_buffer);
-      set_marker_both (w->pointm, w->buffer,
+      set_marker_both (w->pointm, w->contents,
 		       old_charpos, old_bytepos);
     }
 

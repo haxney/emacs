@@ -199,11 +199,11 @@ ins_del_lines (struct frame *f, int vpos, int n)
 
 /* Return the terminal object specified by TERMINAL.  TERMINAL may be
    a terminal object, a frame, or nil for the terminal device of the
-   current frame.  If THROW is zero, return NULL for failure,
+   current frame.  If THROW is false, return NULL for failure,
    otherwise throw an error.  */
 
 struct terminal *
-get_terminal (Lisp_Object terminal, int throw)
+get_terminal (Lisp_Object terminal, bool throw)
 {
   struct terminal *result = NULL;
 
@@ -280,7 +280,7 @@ delete_terminal (struct terminal *terminal)
   xfree (terminal->name);
   terminal->name = NULL;
 
-  /* Check for live frames that are still on this terminal. */
+  /* Check for live frames that are still on this terminal.  */
   FOR_EACH_FRAME (tail, frame)
     {
       struct frame *f = XFRAME (frame);

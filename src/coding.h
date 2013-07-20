@@ -76,6 +76,14 @@ enum define_coding_ccl_arg_index
     coding_arg_ccl_max
   };
 
+enum define_coding_undecided_arg_index
+  {
+    coding_arg_undecided_inhibit_null_byte_detection = coding_arg_max,
+    coding_arg_undecided_inhibit_iso_escape_detection,
+    coding_arg_undecided_prefer_utf_8,
+    coding_arg_undecided_max
+  };
+
 /* Hash table for all coding systems.  Keys are coding system symbols
    and values are spec vectors of the corresponding coding system.  A
    spec vector has the form [ ATTRS ALIASES EOL-TYPE ].  ATTRS is a
@@ -157,6 +165,10 @@ enum coding_attr_index
     coding_attr_utf_16_endian,
 
     coding_attr_emacs_mule_full,
+
+    coding_attr_undecided_inhibit_null_byte_detection,
+    coding_attr_undecided_inhibit_iso_escape_detection,
+    coding_attr_undecided_prefer_utf_8,
 
     coding_attr_last_index
   };
@@ -272,37 +284,31 @@ enum coding_result_code
     CODING_RESULT_SUCCESS,
     CODING_RESULT_INSUFFICIENT_SRC,
     CODING_RESULT_INSUFFICIENT_DST,
-    CODING_RESULT_INCONSISTENT_EOL,
     CODING_RESULT_INVALID_SRC,
-    CODING_RESULT_INTERRUPT,
-    CODING_RESULT_INSUFFICIENT_MEM
+    CODING_RESULT_INTERRUPT
   };
 
 
 /* Macros used for the member `mode' of the struct coding_system.  */
 
-/* If set, recover the original CR or LF of the already decoded text
-   when the decoding routine encounters an inconsistent eol format.  */
-#define CODING_MODE_INHIBIT_INCONSISTENT_EOL	0x01
-
 /* If set, the decoding/encoding routines treat the current data as
    the last block of the whole text to be converted, and do the
    appropriate finishing job.  */
-#define CODING_MODE_LAST_BLOCK			0x02
+#define CODING_MODE_LAST_BLOCK			0x01
 
 /* If set, it means that the current source text is in a buffer which
    enables selective display.  */
-#define CODING_MODE_SELECTIVE_DISPLAY		0x04
+#define CODING_MODE_SELECTIVE_DISPLAY		0x02
 
 /* This flag is used by the decoding/encoding routines on the fly.  If
    set, it means that right-to-left text is being processed.  */
-#define CODING_MODE_DIRECTION			0x08
+#define CODING_MODE_DIRECTION			0x04
 
-#define CODING_MODE_FIXED_DESTINATION		0x10
+#define CODING_MODE_FIXED_DESTINATION		0x08
 
 /* If set, it means that the encoding routines produces some safe
    ASCII characters (usually '?') for unsupported characters.  */
-#define CODING_MODE_SAFE_ENCODING		0x20
+#define CODING_MODE_SAFE_ENCODING		0x10
 
   /* For handling composition sequence.  */
 #include "composite.h"
@@ -374,6 +380,19 @@ struct emacs_mule_spec
 
 struct ccl_spec;
 
+struct undecided_spec
+{
+  /* Inhibit null byte detection.  1 means always inhibit,
+     -1 means do not inhibit, 0 means rely on user variable.  */
+  int inhibit_nbd;
+
+  /* Inhibit ISO escape detection.  -1, 0, 1 as above.  */
+  int inhibit_ied;
+
+  /* Prefer UTF-8 when the input could be other encodings.  */
+  bool prefer_utf_8;
+};
+
 enum utf_bom_type
   {
     utf_detect_bom,
@@ -431,6 +450,7 @@ struct coding_system
       struct utf_16_spec utf_16;
       enum utf_bom_type utf_8_bom;
       struct emacs_mule_spec emacs_mule;
+      struct undecided_spec undecided;
     } spec;
 
   int max_charset_id;
@@ -446,8 +466,14 @@ struct coding_system
   /* How may heading bytes we can skip for decoding.  This is set to
      -1 in setup_coding_system, and updated by detect_coding.  So,
      when this is equal to the byte length of the text being
-     converted, we can skip the actual conversion process.  */
+     converted, we can skip the actual conversion process except for
+     the eol format.  */
   ptrdiff_t head_ascii;
+
+  ptrdiff_t detected_utf8_chars;
+
+  /* Used internally in coding.c.  See the comment of detect_ascii.  */
+  int eol_seen;
 
   /* The following members are set by encoding/decoding routine.  */
   ptrdiff_t produced, produced_char, consumed, consumed_char;
@@ -721,25 +747,12 @@ extern wchar_t *to_unicode (Lisp_Object str, Lisp_Object *buf);
    failure modes.  STR itself is not modified.  */
 extern Lisp_Object from_unicode (Lisp_Object str);
 
+/* Convert WSTR to an Emacs string.  */
+extern Lisp_Object from_unicode_buffer (const wchar_t* wstr);
+
 #endif /* WINDOWSNT || CYGWIN */
 
 /* Macros for backward compatibility.  */
-
-#define decode_coding_region(coding, from, to)		\
-  decode_coding_object (coding, Fcurrent_buffer (),	\
-			from, CHAR_TO_BYTE (from),	\
-			to, CHAR_TO_BYTE (to), Fcurrent_buffer ())
-
-
-#define encode_coding_region(coding, from, to)		\
-  encode_coding_object (coding, Fcurrent_buffer (),	\
-			from, CHAR_TO_BYTE (from),	\
-			to, CHAR_TO_BYTE (to), Fcurrent_buffer ())
-
-
-#define decode_coding_string(coding, string, nocopy)			\
-  decode_coding_object (coding, string, 0, 0, SCHARS (string),		\
-			SBYTES (string), Qt)
 
 #define encode_coding_string(coding, string, nocopy)			\
   (STRING_MULTIBYTE(string) ?						\

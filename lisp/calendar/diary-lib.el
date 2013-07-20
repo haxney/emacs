@@ -366,7 +366,7 @@ Returns a string using match elements 1-5, where:
     ;; use the standard function calendar-date-string.
     (concat (if month
                 (calendar-date-string (list month (string-to-number day)
-                                            (string-to-number year)))
+                                            (string-to-number year)) nil t)
               (cond ((eq calendar-date-style 'iso) "\\3 \\1 \\2") ; YMD
                     ((eq calendar-date-style 'european) "\\2 \\1 \\3") ; DMY
                     (t "\\1 \\2 \\3"))) ; MDY
@@ -1032,7 +1032,14 @@ in the mode line.  This is an option for `diary-display-function'."
 (define-obsolete-function-alias 'simple-diary-display
   'diary-simple-display "23.1")
 
-(define-button-type 'diary-entry 'action #'diary-goto-entry
+(defvar diary-goto-entry-function 'diary-goto-entry
+  "Function called to jump to a diary entry.
+Modes that require special handling of the included file
+containing the diary entry can assign a suitable function to this
+variable.")
+
+(define-button-type 'diary-entry
+  'action (lambda (button) (funcall diary-goto-entry-function button))
   'face 'diary-button 'help-echo "Find this diary entry"
   'follow-link t)
 
@@ -2611,14 +2618,23 @@ user is asked to confirm its addition."
           (diary-from-outlook-internal subject body)
           (message "Diary entry added"))))))
 
+(defvar diary-from-outlook-function nil
+  "If non-nil, a function of one argument for `diary-from-outlook' to call.
+If the current buffer contains an Outlook-style appointment message,
+this function should extract it into a diary entry.  If the argument is
+nil, it should ask for confirmation before adding this entry to the diary.
+For examples, see `diary-from-outlook-rmail' and `diary-from-outlook-gnus'.")
+
 (defun diary-from-outlook (&optional noconfirm)
   "Maybe snarf diary entry from current Outlook-generated message.
-Currently knows about Gnus and Rmail modes.  Unless the optional
-argument NOCONFIRM is non-nil (which is the case when this
-function is called interactively), then if an entry is found the
-user is asked to confirm its addition."
+Uses `diary-from-outlook-function' if that is non-nil, else
+`diary-from-outlook-rmail' for Rmail or `diary-from-outlook-gnus' for Gnus.
+Unless the optional argument NOCONFIRM is non-nil (which is the
+case when this function is called interactively), then if an
+entry is found the user is asked to confirm its addition."
   (interactive "p")
   (let ((func (cond
+               (diary-from-outlook-function)
                ((eq major-mode 'rmail-mode)
                 #'diary-from-outlook-rmail)
                ((memq major-mode '(gnus-summary-mode gnus-article-mode))

@@ -170,7 +170,7 @@ enum {
   SEEN_HINTSTYLE  = 0x10,
   SEEN_DPI        = 0x20,
   SEEN_FONT       = 0x40,
-  SEEN_TB_STYLE   = 0x80,
+  SEEN_TB_STYLE   = 0x80
 };
 struct xsettings
 {
@@ -673,26 +673,21 @@ apply_xft_settings (struct x_display_info *dpyinfo,
   if ((settings->seen & SEEN_DPI) != 0 && oldsettings.dpi != settings->dpi
       && settings->dpi > 0)
     {
-      Lisp_Object frame, tail;
-
       FcPatternDel (pat, FC_DPI);
       FcPatternAddDouble (pat, FC_DPI, settings->dpi);
       ++changed;
       oldsettings.dpi = settings->dpi;
 
-      /* Change the DPI on this display and all frames on the display.  */
+      /* Changing the DPI on this display affects all frames on it.
+	 Check FRAME_RES_X and FRAME_RES_Y in frame.h to see how.  */
       dpyinfo->resy = dpyinfo->resx = settings->dpi;
-      FOR_EACH_FRAME (tail, frame)
-        if (FRAME_X_P (XFRAME (frame))
-            && FRAME_X_DISPLAY_INFO (XFRAME (frame)) == dpyinfo)
-          XFRAME (frame)->resy = XFRAME (frame)->resx = settings->dpi;
     }
 
   if (changed)
     {
       static char const format[] =
 	"Antialias: %d, Hinting: %d, RGBA: %d, LCDFilter: %d, "
-	"Hintstyle: %d, DPI: %lf";
+	"Hintstyle: %d, DPI: %f";
       enum
       {
 	d_formats = 5,
@@ -701,7 +696,7 @@ apply_xft_settings (struct x_display_info *dpyinfo,
 	max_f_integer_digits = DBL_MAX_10_EXP + 1,
 	f_precision = 6,
 	lf_growth = (sizeof "-." + max_f_integer_digits + f_precision
-		     - sizeof "%lf")
+		     - sizeof "%f")
       };
       char buf[sizeof format + d_formats * d_growth + lf_formats * lf_growth];
 

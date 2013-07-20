@@ -53,7 +53,8 @@ or directory when no target file is specified."
 	  (const     :tag "Startup screen" nil)
 	  (directory :tag "Directory" :value "~/")
 	  (file      :tag "File" :value "~/.emacs")
-          (function  :tag "Function")
+	  (const     :tag "Notes buffer" remember-notes)
+	  (function  :tag "Function")
 	  (const     :tag "Lisp scratch buffer" t))
   :version "24.4"
   :group 'initialization)
@@ -413,14 +414,20 @@ Warning Warning!!!  Pure space overflow    !!!Warning Warning
   :type 'directory
   :initialize 'custom-initialize-delay)
 
-(defconst package-subdirectory-regexp
-  "\\([^.].*?\\)-\\([0-9]+\\(?:[.][0-9]+\\|\\(?:pre\\|beta\\|alpha\\)[0-9]+\\)*\\)"
-  "Regular expression matching the name of a package subdirectory.
-The first subexpression is the package name.
-The second subexpression is the version string.
+(defvar package--builtin-versions
+  ;; Mostly populated by loaddefs.el via autoload-builtin-package-versions.
+  (purecopy `((emacs . ,(version-to-list emacs-version))))
+  "Alist giving the version of each versioned builtin package.
+I.e. each element of the list is of the form (NAME . VERSION) where
+NAME is the package name as a symbol, and VERSION is its version
+as a list.")
 
-The regexp should not contain a starting \"\\`\" or a trailing
- \"\\'\"; those are added automatically by callers.")
+(defun package--description-file (dir)
+  (concat (let ((subdir (file-name-nondirectory
+                         (directory-file-name dir))))
+            (if (string-match "\\([^.].*?\\)-\\([0-9]+\\(?:[.][0-9]+\\|\\(?:pre\\|beta\\|alpha\\)[0-9]+\\)*\\)" subdir)
+                (match-string 1 subdir) subdir))
+          "-pkg.el"))
 
 (defun normal-top-level-add-subdirs-to-load-path ()
   "Add all subdirectories of `default-directory' to `load-path'.
@@ -715,7 +722,7 @@ opening the first frame (e.g. open a connection to an X server).")
                      default-frame-alist))
 	      (t
                (push argi rest)))))
-    (nreverse rest)))
+    (nconc (nreverse rest) args)))
 
 (declare-function x-get-resource "frame.c"
 		  (attribute class &optional component subclass))
@@ -1194,10 +1201,12 @@ the `--debug-init' option to view a complete error backtrace."
 	   (dolist (dir dirs)
 	     (when (file-directory-p dir)
 	       (dolist (subdir (directory-files dir))
-		 (when (and (file-directory-p (expand-file-name subdir dir))
-			    (string-match
-			     (concat "\\`" package-subdirectory-regexp "\\'")
-			     subdir))
+		 (when (let ((subdir (expand-file-name subdir dir)))
+                         (and (file-directory-p subdir)
+                              (file-exists-p
+                               (expand-file-name
+                                (package--description-file subdir)
+                                subdir))))
 		   (throw 'package-dir-found t)))))))
        (package-initialize))
 
@@ -1856,11 +1865,8 @@ To quit a partially entered command, type Control-g.\n")
   (insert "\n" (emacs-version)
 	  "\n" emacs-copyright))
 
-;; No mouse menus, so give help using kbd commands.
 (defun normal-no-mouse-startup-screen ()
-
-  ;; If keys have their default meanings,
-  ;; use precomputed string to save lots of time.
+  "Show a splash screen suitable for displays without mouse support."
   (let* ((c-h-accessible
           ;; If normal-erase-is-backspace is used on a tty, there's
           ;; no way to invoke C-h and you have to use F1 instead.
@@ -1938,47 +1944,24 @@ If you have no Meta key, you may instead type ESC followed by the character.)")
 		 'follow-link t)
   (insert "\n")
   (insert "\n" (emacs-version) "\n" emacs-copyright "\n")
-
-  (if (and (eq (key-binding "\C-h\C-c") 'describe-copying)
-	   (eq (key-binding "\C-h\C-d") 'describe-distribution)
-	   (eq (key-binding "\C-h\C-w") 'describe-no-warranty))
-      (progn
-	(insert
-	 "
-GNU Emacs comes with ABSOLUTELY NO WARRANTY; type C-h C-w for ")
-	(insert-button "full details"
-		       'action (lambda (_button) (describe-no-warranty))
-		       'follow-link t)
-	(insert ".
-Emacs is Free Software--Free as in Freedom--so you can redistribute copies
-of Emacs and modify it; type C-h C-c to see ")
-	(insert-button "the conditions"
-		       'action (lambda (_button) (describe-copying))
-		       'follow-link t)
-	(insert ".
-Type C-h C-d for information on ")
-	(insert-button "getting the latest version"
-		       'action (lambda (_button) (describe-distribution))
-		       'follow-link t)
-	(insert "."))
-    (insert (substitute-command-keys
-	     "
+  (insert (substitute-command-keys
+	   "
 GNU Emacs comes with ABSOLUTELY NO WARRANTY; type \\[describe-no-warranty] for "))
-    (insert-button "full details"
-		   'action (lambda (_button) (describe-no-warranty))
-		   'follow-link t)
-    (insert (substitute-command-keys ".
+  (insert-button "full details"
+		 'action (lambda (_button) (describe-no-warranty))
+		 'follow-link t)
+  (insert (substitute-command-keys ".
 Emacs is Free Software--Free as in Freedom--so you can redistribute copies
 of Emacs and modify it; type \\[describe-copying] to see "))
-    (insert-button "the conditions"
-		   'action (lambda (_button) (describe-copying))
-		   'follow-link t)
-    (insert (substitute-command-keys".
+  (insert-button "the conditions"
+		 'action (lambda (_button) (describe-copying))
+		 'follow-link t)
+  (insert (substitute-command-keys".
 Type \\[describe-distribution] for information on "))
-    (insert-button "getting the latest version"
-		   'action (lambda (_button) (describe-distribution))
-		   'follow-link t)
-    (insert ".")))
+  (insert-button "getting the latest version"
+		 'action (lambda (_button) (describe-distribution))
+		 'follow-link t)
+  (insert "."))
 
 (defun normal-about-screen ()
   (insert "\n" (emacs-version) "\n" emacs-copyright "\n\n")
@@ -2027,14 +2010,11 @@ Type \\[describe-distribution] for information on "))
   (insert "\tBuying printed manuals from the FSF\n"))
 
 (defun startup-echo-area-message ()
-  (cond ((daemonp)
-	 "Starting Emacs daemon.")
-	((eq (key-binding "\C-h\C-a") 'about-emacs)
-	 "For information about GNU Emacs and the GNU system, type C-h C-a.")
-	(t
-	 (substitute-command-keys
-	  "For information about GNU Emacs and the GNU system, type \
-\\[about-emacs]."))))
+  (if (daemonp)
+      "Starting Emacs daemon."
+    (substitute-command-keys
+     "For information about GNU Emacs and the GNU system, type \
+\\[about-emacs].")))
 
 (defun display-startup-echo-area-message ()
   (let ((resize-mini-windows t))
@@ -2399,13 +2379,17 @@ A fancy display is used on graphic displays, normal otherwise."
     ;; Use arg 1 so that we don't collapse // at the start of the file name.
     ;; That is significant on some systems.
     ;; However, /// at the beginning is supposed to mean just /, not //.
-    (if (string-match "^///+" file)
+    (if (string-match
+	 (if (memq system-type '(ms-dos windows-nt))
+	     "^\\([\\/][\\/][\\/]\\)+"
+	   "^///+")
+	 file)
 	(setq file (replace-match "/" t t file)))
-    (and (memq system-type '(ms-dos windows-nt))
-	 (string-match "^[A-Za-z]:\\(\\\\[\\\\/]\\)" file) ; C:\/ or C:\\
-	 (setq file (replace-match "/" t t file 1)))
-    (while (string-match "//+" file 1)
-      (setq file (replace-match "/" t t file)))
+    (if (memq system-type '(ms-dos windows-nt))
+	(while (string-match "\\([\\/][\\/]\\)+" file 1)
+	  (setq file (replace-match "/" t t file)))
+      (while (string-match "//+" file 1)
+	(setq file (replace-match "/" t t file))))
     file))
 
 ;;; startup.el ends here

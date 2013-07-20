@@ -1,3 +1,174 @@
+2013-07-12  Glenn Morris  <rgm@gnu.org>
+
+	* admin.el (manual-style-string): Use non-abbreviated url.
+
+2013-07-09  Paul Eggert  <eggert@cs.ucla.edu>
+
+	Port recent close-on-exec changes to Cygwin (Bug#14821).
+	* merge-gnulib (GNULIB_TOOL_FLAGS): Don't avoid binary-io.
+
+	Handle error numbers a bit more reliably.
+	* merge-gnulib (GNULIB_MODULES): Remove ignore-value.
+
+2013-07-07  Paul Eggert  <eggert@cs.ucla.edu>
+
+	Make file descriptors close-on-exec when possible (Bug#14803).
+	* merge-gnulib (GNULIB_MODULES): Add fcntl, pipe2.
+	(GNULIB_TOOL_FLAGS): Avoid binary-io, close.  Do not avoid fcntl.
+
+2013-07-06  Glenn Morris  <rgm@gnu.org>
+
+	* admin.el (manual-misc-manuals): New function.
+	(make-manuals): Avoid hard-coding list of misc manuals.
+	Add the option to only make certain type(s) of output.
+	(manual-misc-html): Special-case ccmode and efaq.
+	(manual-html-mono, manual-html-node, manual-pdf, manual-ps):
+	Move creation of output directory here from make-manuals.
+	(manual-html-fix-index-2): Avoid dynamic reference to `f'.
+
+2013-07-05  Glenn Morris  <rgm@gnu.org>
+
+	* admin.el (make-manuals): Use a standard location for lispintro.
+	Use a pdf/ subdirectory for pdf versions.
+
+2013-06-29  Glenn Morris  <rgm@gnu.org>
+
+	* admin.el (make-manuals): Don't bother with txt or dvi any more.
+	(manual-txt): Remove.
+	(manual-pdf): Doc fix.
+	(manual-ps): Rename from manual-dvi.
+	(manual-pdf, manual-ps): Work in the directory with the texi file,
+	so that TeX intermediate files go there rather than to PWD.
+
+2013-06-15  Xue Fuqiao  <xfq.free@gmail.com>
+
+	* notes/changelogs: Mention trivial changes in Change Log.
+
+2013-06-13  Glenn Morris  <rgm@gnu.org>
+
+	* admin.el (manual-style-string): Use new file manual.css.
+
+2013-06-02  Eric Ludlam  <zappo@gnu.org>
+
+	* grammars/srecode-template.wy (variable): Accept a single number
+	as a variable value.  Allows the 'priority' to be set to a number.
+	(wisent-srecode-template-lexer): Move number up so it can be created.
+
+2013-05-16  Glenn Morris  <rgm@gnu.org>
+
+	* cus-test.el (cus-test-cus-load-groups): New function.
+	(cus-test-get-options): Add option to return groups.
+	(cus-test-noloads): Also check custom groups.
+
+2013-05-15  Stefan Monnier  <monnier@iro.umontreal.ca>
+
+	* quick-install-emacs: Don't prune DOC-* files a any more.
+
+2013-05-14  Glenn Morris  <rgm@gnu.org>
+
+	* cus-test.el (cus-test-get-lisp-files): Ignore obsolete/.
+	(cus-test-libs): Fix let-binding of default-directory.
+	(cus-test-noloads): Load all libs for the comparison.
+
+2013-05-11  Glenn Morris  <rgm@gnu.org>
+
+	* cus-test.el (cus-test-libs-noloads): Add a few more files.
+	(cus-test-load-libs, cus-test-opts):
+	Add option to load more/all Lisp files.
+	(cus-test-get-lisp-files): Ignore .*.el files.
+
+2013-05-10  Glenn Morris  <rgm@gnu.org>
+
+	* cus-test.el (cus-test-libs-noloads): Add some files.
+	(cus-test-get-lisp-files): New function.
+	(cus-test-libs): Add option to load more/all Lisp files.
+
+2013-05-09  Glenn Morris  <rgm@gnu.org>
+
+	* cus-test.el: No need to provide bbdb, bbdb-com any more.
+	(cus-test-libs-noloads): Add dunnet in the defvar.
+	(dunnet): Don't always load it.
+	(viper-mode): Only set if interactive.
+	(cus-test-load-custom-loads): Load dunnet if necessary.
+	(cus-test-load-1): New macro, with common code from cus-test-load-libs
+	and cus-test-libs.
+	(cus-test-load-libs, cus-test-libs): Use cus-test-load-1 macro.
+	Update for cus-test-get-autoload-deps changed result.
+	(cus-test-get-autoload-deps): Simplify.  Return file names as they
+	appear in loaddefs.el (directory parts are needed now that not all
+	lisp subdirs are in load-path).
+	(cus-test-deps): Explicitly skip dunnet.
+
+2013-05-07  Paul Eggert  <eggert@cs.ucla.edu>
+
+	Use Gnulib ACL implementation, for benefit of Solaris etc. (Bug#14295)
+	* merge-gnulib (GNULIB_MODULES): Add qacl.
+	(GNULIB_TOOL_FLAGS): Do not avoid errno.
+
+2013-04-01  Paul Eggert  <eggert@cs.ucla.edu>
+
+	Use UTF-8 for most files with non-ASCII characters (Bug#13936).
+	* notes/unicode (etc/tutorials/TUTORIAL.ko, leim/quail/hanja.el)
+	(leim/quail/hanja3.el, leim/quail/symbol-ksc.el):
+	Now utf-8, not iso-2022-7bit.  Also, files that contain non-UTF-8
+	characters are now encoded in utf-8-emacs, not iso-2022-7bit.
+
+2013-03-18  Paul Eggert  <eggert@cs.ucla.edu>
+
+	* notes/unicode: Mention some more iso-2022-7bit files (Bug#13936).
+
+	Automate the build of ja-dic.el (Bug#13984).
+	* notes/unicode: ja-dic.el is now UTF-8.
+
+2013-03-16  Glenn Morris  <rgm@gnu.org>
+
+	* admin.el (manual-pdf, manual-dvi): Pass -I to texi2pdf, texi2dvi.
+
+2013-03-16  Glenn Morris  <rgm@gnu.org>
+
+	* admin.el (manual-html-mono, manual-html-node): Add -DWWW_GNU_ORG.
+
+2013-03-13  Paul Eggert  <eggert@cs.ucla.edu>
+
+	File synchronization fixes (Bug#13944).
+	* CPP-DEFINES (BSD_SYSTEM, HAVE_FSYNC): Remove.
+	* merge-gnulib (GNULIB_MODULES): Add fsync, fdatasync.
+
+2013-03-11  Paul Eggert  <eggert@cs.ucla.edu>
+
+	* notes/unicode: Improve notes about Emacs source file encoding.
+
+2013-03-11  Glenn Morris  <rgm@gnu.org>
+
+	* admin.el (make-manuals): Add emacs-lisp-intro and some more
+	doc/misc manuals.
+	(manual-html-mono, manual-html-node, manual-txt):
+	Pass -I to makeinfo.
+
+2013-03-10  Glenn Morris  <rgm@gnu.org>
+
+	* admin.el (add-release-logs): Use UTC for release date.
+
+2013-03-09  Glenn Morris  <rgm@gnu.org>
+
+	* admin.el (add-release-logs): Provide interactive defaults.
+	Allow specification of the release date.  Don't exclude gnus/.
+
+2013-03-05  Paul Eggert  <eggert@cs.ucla.edu>
+
+	* notes/unicode: Add notes about Emacs source file encoding.
+
+2013-03-04  Paul Eggert  <eggert@cs.ucla.edu>
+
+	* grammars/java-tags.wy (CHAR): Remove "('\u0000' to '\uffff')"
+	from summary, as this causes javat-wy.el to contain both a null byte
+	and a byte sequence that is not valid UTF-8, which is inconvenient.
+
+2013-03-03  Paul Eggert  <eggert@cs.ucla.edu>
+
+	* bzrmerge.el (bzrmerge-apply): Omit Latin-1 char from diagnostic.
+	If there were a real need, it should be UTF-8 anyway.
+
 2013-02-25  Paul Eggert  <eggert@cs.ucla.edu>
 
 	Simplify data_start configuration (Bug#13783).
@@ -29,7 +200,7 @@
 
 2012-12-14  Paul Eggert  <eggert@cs.ucla.edu>
 
-	Fix permissions bugs with setgid directories etc. (Bug#13125)
+	Fix permissions bugs with setgid directories etc.  (Bug#13125)
 	* CPP-DEFINES (BSD4_2): Remove.
 
 2012-12-08  Paul Eggert  <eggert@cs.ucla.edu>
@@ -161,7 +332,7 @@
 
 	* grammars/grammar.wy (semantic-grammar-lexer): Remove, since it
 	was copied to grammar.el.  New %provide token to generate prefix
-	which conforms with Emacs conventions.	Remove lexer definition,
+	which conforms with Emacs conventions.  Remove lexer definition,
 	which is now in grammar.el.
 
 2012-09-27  Glenn Morris  <rgm@gnu.org>

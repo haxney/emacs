@@ -287,7 +287,7 @@ font_pixel_size (FRAME_PTR f, Lisp_Object spec)
   if (INTEGERP (val))
     dpi = XINT (val);
   else
-    dpi = f->resy;
+    dpi = FRAME_RES_Y (f);
   pixel_size = POINT_TO_PIXEL (point_size, dpi);
   return pixel_size;
 #else
@@ -472,7 +472,7 @@ font_registry_charsets (Lisp_Object registry, struct charset **encoding, struct 
 	goto invalid_entry;
       val = Fcons (make_number (encoding_id), make_number (repertory_id));
       font_charset_alist
-	= nconc2 (font_charset_alist, Fcons (Fcons (registry, val), Qnil));
+	= nconc2 (font_charset_alist, list1 (Fcons (registry, val)));
     }
 
   if (encoding)
@@ -483,7 +483,7 @@ font_registry_charsets (Lisp_Object registry, struct charset **encoding, struct 
 
  invalid_entry:
   font_charset_alist
-    = nconc2 (font_charset_alist, Fcons (Fcons (registry, Qnil), Qnil));
+    = nconc2 (font_charset_alist, list1 (Fcons (registry, Qnil)));
   return -1;
 }
 
@@ -1219,7 +1219,7 @@ font_unparse_xlfd (Lisp_Object font, int pixel_size, char *name, int nbytes)
 		return -1;
 	      f[j] = p = alloca (alloc);
 	      sprintf (p, "%s%s-*", SDATA (val),
-		       "*" + (SDATA (val)[SBYTES (val) - 1] == '*'));
+		       &"*"[SDATA (val)[SBYTES (val) - 1] == '*']);
 	    }
 	  else
 	    f[j] = SSDATA (val);
@@ -1453,7 +1453,7 @@ font_parse_fcname (char *name, ptrdiff_t len, Lisp_Object font)
 		  else
                     {
                       extra_props = nconc2 (extra_props,
-                                            Fcons (Fcons (key, val), Qnil));
+                                            list1 (Fcons (key, val)));
                     }
 		}
 	      p = q;
@@ -1618,7 +1618,7 @@ font_unparse_fcname (Lisp_Object font, int pixel_size, char *name, int nbytes)
     }
   if (point_size > 0)
     {
-      int len = snprintf (p, lim - p, "-%d" + (p == name), point_size);
+      int len = snprintf (p, lim - p, &"-%d"[p == name], point_size);
       if (! (0 <= len && len < lim - p))
 	return -1;
       p += len;
@@ -1861,7 +1861,7 @@ otf_open (Lisp_Object file)
   else
     {
       otf = STRINGP (file) ? OTF_open (SSDATA (file)) : NULL;
-      val = make_save_pointer (otf);
+      val = make_save_ptr (otf);
       otf_list = Fcons (Fcons (file, val), otf_list);
     }
   return otf;
@@ -2519,7 +2519,7 @@ font_prepare_cache (FRAME_PTR f, struct font_driver *driver)
     val = XCDR (val);
   if (NILP (val))
     {
-      val = Fcons (driver->type, Fcons (make_number (1), Qnil));
+      val = list2 (driver->type, make_number (1));
       XSETCDR (cache, Fcons (val, XCDR (cache)));
     }
   else
@@ -2819,7 +2819,7 @@ font_open_entity (FRAME_PTR f, Lisp_Object entity, int pixel_size)
   struct font_driver_list *driver_list;
   Lisp_Object objlist, size, val, font_object;
   struct font *font;
-  int min_width, height;
+  int min_width, height, psize;
 
   eassert (FONT_ENTITY_P (entity));
   size = AREF (entity, FONT_SIZE_INDEX);
@@ -2846,12 +2846,19 @@ font_open_entity (FRAME_PTR f, Lisp_Object entity, int pixel_size)
         }
     }
 
-  font_object = driver_list->driver->open (f, entity, pixel_size);
-  if (!NILP (font_object))
-    ASET (font_object, FONT_SIZE_INDEX, make_number (pixel_size));
+  /* We always open a font of manageable size; i.e non-zero average
+     width and height.  */
+  for (psize = pixel_size; ; psize++)
+    {
+      font_object = driver_list->driver->open (f, entity, psize);
+      if (NILP (font_object))
+	return Qnil;
+      font = XFONT_OBJECT (font_object);
+      if (font->average_width > 0 && font->height > 0)
+	break;
+    }
+  ASET (font_object, FONT_SIZE_INDEX, make_number (pixel_size));
   FONT_ADD_LOG ("open", entity, font_object);
-  if (NILP (font_object))
-    return Qnil;
   ASET (entity, FONT_OBJLIST_INDEX,
 	Fcons (font_object, AREF (entity, FONT_OBJLIST_INDEX)));
 
@@ -3117,7 +3124,9 @@ font_find_for_lface (FRAME_PTR f, Lisp_Object *attrs, Lisp_Object spec, int c)
     {
       double pt = XINT (attrs[LFACE_HEIGHT_INDEX]);
 
-      pixel_size = POINT_TO_PIXEL (pt / 10, f->resy);
+      pixel_size = POINT_TO_PIXEL (pt / 10, FRAME_RES_Y (f));
+      if (pixel_size < 1)
+	pixel_size = 1;
     }
   ASET (work, FONT_SIZE_INDEX, Qnil);
   foundry[0] = AREF (work, FONT_FOUNDRY_INDEX);
@@ -3247,12 +3256,13 @@ font_open_for_lface (FRAME_PTR f, Lisp_Object entity, Lisp_Object *attrs, Lisp_O
 	    }
 
 	  pt /= 10;
-	  size = POINT_TO_PIXEL (pt, f->resy);
+	  size = POINT_TO_PIXEL (pt, FRAME_RES_Y (f));
 #ifdef HAVE_NS
 	  if (size == 0)
 	    {
 	      Lisp_Object ffsize = get_frame_param (f, Qfontsize);
-	      size = NUMBERP (ffsize) ? POINT_TO_PIXEL (XINT (ffsize), f->resy) : 0;
+	      size = (NUMBERP (ffsize)
+		      ? POINT_TO_PIXEL (XINT (ffsize), FRAME_RES_Y (f)) : 0);
 	    }
 #endif
 	}
@@ -3507,8 +3517,7 @@ font_update_drivers (FRAME_PTR f, Lisp_Object new_drivers)
 
   for (list = f->font_driver_list; list; list = list->next)
     if (list->on)
-      active_drivers = nconc2 (active_drivers,
-			       Fcons (list->driver->type, Qnil));
+      active_drivers = nconc2 (active_drivers, list1 (list->driver->type));
   return active_drivers;
 }
 
@@ -3853,7 +3862,8 @@ usage: (font-spec ARGS...)  */)
       if (EQ (key, QCname))
 	{
 	  CHECK_STRING (val);
-	  font_parse_name (SSDATA (val), SBYTES (val), spec);
+	  if (font_parse_name (SSDATA (val), SBYTES (val), spec) < 0)
+	    error ("Invalid font name: %s", SSDATA (val));
 	  font_put_extra (spec, key, val);
 	}
       else
@@ -4021,7 +4031,7 @@ are to be displayed on.  If omitted, the selected frame is used.  */)
   if (INTEGERP (val))
     {
       Lisp_Object font_dpi = AREF (font, FONT_DPI_INDEX);
-      int dpi = INTEGERP (font_dpi) ? XINT (font_dpi) : f->resy;
+      int dpi = INTEGERP (font_dpi) ? XINT (font_dpi) : FRAME_RES_Y (f);
       plist[n++] = QCheight;
       plist[n++] = make_number (PIXEL_TO_POINT (XINT (val) * 10, dpi));
     }
@@ -4122,7 +4132,7 @@ how close they are to PREFER.  */)
     return Qnil;
   if (NILP (XCDR (list))
       && ASIZE (XCAR (list)) == 1)
-    return Fcons (AREF (XCAR (list), 0), Qnil);
+    return list1 (AREF (XCAR (list), 0));
 
   if (! NILP (prefer))
     vec = font_sort_entities (list, prefer, frame, 0);
@@ -4532,7 +4542,7 @@ DEFUN ("open-font", Fopen_font, Sopen_font, 1, 3, 0,
     {
       CHECK_NUMBER_OR_FLOAT (size);
       if (FLOATP (size))
-	isize = POINT_TO_PIXEL (XFLOAT_DATA (size), f->resy);
+	isize = POINT_TO_PIXEL (XFLOAT_DATA (size), FRAME_RES_Y (f));
       else
 	isize = XINT (size);
       if (! (INT_MIN <= isize && isize <= INT_MAX))
@@ -4705,7 +4715,7 @@ the corresponding element is nil.  */)
       chars = aref_addr (object, XFASTINT (from));
     }
 
-  vec = Fmake_vector (make_number (len), Qnil);
+  vec = make_uninit_vector (len);
   for (i = 0; i < len; i++)
     {
       Lisp_Object g;
@@ -4715,8 +4725,11 @@ the corresponding element is nil.  */)
 
       code = font->driver->encode_char (font, c);
       if (code == FONT_INVALID_CODE)
-	continue;
-      g = Fmake_vector (make_number (LGLYPH_SIZE), Qnil);
+	{
+	  ASET (vec, i, Qnil);
+	  continue;
+	}
+      g = LGLYPH_NEW ();
       LGLYPH_SET_FROM (g, i);
       LGLYPH_SET_TO (g, i);
       LGLYPH_SET_CHAR (g, c);
@@ -4757,7 +4770,7 @@ character at index specified by POSITION.  */)
 
   if (NILP (string))
     {
-      if (XBUFFER (w->buffer) != current_buffer)
+      if (XBUFFER (w->contents) != current_buffer)
 	error ("Specified window is not displaying the current buffer.");
       CHECK_NUMBER_COERCE_MARKER (position);
       if (! (BEGV <= XINT (position) && XINT (position) < ZV))
@@ -4840,11 +4853,9 @@ If the named font is not yet loaded, return nil.  */)
   Lisp_Object info;
   Lisp_Object font_object;
 
-  (*check_window_system_func) ();
-
   if (! FONTP (name))
     CHECK_STRING (name);
-  f = decode_live_frame (frame);
+  f = decode_window_system_frame (frame);
 
   if (STRINGP (name))
     {
@@ -4898,7 +4909,7 @@ build_style_table (const struct table_entry *entry, int nelement)
   int i, j;
   Lisp_Object table, elt;
 
-  table = Fmake_vector (make_number (nelement), Qnil);
+  table = make_uninit_vector (nelement);
   for (i = 0; i < nelement; i++)
     {
       for (j = 0; entry[i].names[j]; j++);

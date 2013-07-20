@@ -20,6 +20,11 @@
 @c xxx and yyy are auxiliary macros in order to omit leading and
 @c trailing whitespace.  Not very elegant, but I don't know it better.
 
+@c There are subtle differences between texinfo 4.13 and 5.0.  We must
+@c declare two versions of the macro.  This will be improved, hopefully.
+
+@c Texinfo 5.0.
+@ifset txicommandconditionals
 @macro xxx {one}
 @set \one\
 @end macro
@@ -38,6 +43,26 @@
 @yyy{\user\,@@}@c
 \host\@value{postfix}\localname\
 @end macro
+@end ifset
+
+@c Texinfo 4.13.
+@ifclear txicommandconditionals
+@macro xxx {one}@c
+@set \one\@c
+@end macro
+
+@macro yyy {one, two}@c
+@xxx{x\one\}@c
+@ifclear x@c
+\one\@w{}\two\@c
+@end ifclear
+@clear x\one\@c
+@end macro
+
+@macro trampfn {method, user, host, localname}@c
+@value{prefix}@yyy{\method\,@value{postfixhop}}@yyy{\user\,@@}\host\@value{postfix}\localname\@c
+@end macro
+@end ifclear
 
 @copying
 Copyright @copyright{} 1999--2013 Free Software Foundation, Inc.
@@ -189,6 +214,8 @@ Configuring @value{tramp} for use
 * Customizing Completion::      Selecting config files for user/host name completion.
 * Password handling::           Reusing passwords for several connections.
 * Connection caching::          Reusing connection related information.
+* Predefined connection information::
+                                Setting own connection related information.
 * Remote Programs::             How @value{tramp} finds and uses programs on the remote machine.
 * Remote shell setup::          Remote shell setup hints.
 * Android shell setup::         Android shell setup hints.
@@ -517,6 +544,8 @@ Method}.
 * Customizing Completion::      Selecting config files for user/host name completion.
 * Password handling::           Reusing passwords for several connections.
 * Connection caching::          Reusing connection related information.
+* Predefined connection information::
+                                Setting own connection related information.
 * Remote Programs::             How @value{tramp} finds and uses programs on the remote machine.
 * Remote shell setup::          Remote shell setup hints.
 * Android shell setup::         Android shell setup hints.
@@ -624,13 +653,6 @@ Connect to the remote host with @command{ssh}.  This is identical to
 the previous option except that the @command{ssh} package is used,
 making the connection more secure.
 
-There are also two variants, @option{ssh1} and @option{ssh2}, that
-call @samp{ssh -1} and @samp{ssh -2}, respectively.  This way, you can
-explicitly select whether you want to use the SSH protocol version 1
-or 2 to connect to the remote host.  (You can also specify in
-@file{~/.ssh/config}, the SSH configuration file, which protocol
-should be used, and use the regular @option{ssh} method.)
-
 All the methods based on @command{ssh} have an additional feature: you
 can specify a host name which looks like @file{host#42} (the real host
 name, then a hash sign, then a port number).  This means to connect to
@@ -726,16 +748,6 @@ remote host.
 
 This supports the @samp{-P} argument.
 
-Additionally, the methods @option{plink1} and @option{plink2} are
-provided, which call @samp{plink -1 -ssh} or @samp{plink -2 -ssh} in
-order to use SSH protocol version 1 or 2 explicitly.
-
-CCC: Do we have to connect to the remote host once from the command
-line to accept the SSH key?  Maybe this can be made automatic?
-
-CCC: Say something about the first shell command failing.  This might
-be due to a wrong setting of @code{tramp-rsh-end-of-line}.
-
 
 @item @option{plinkx}
 @cindex method plinkx
@@ -798,13 +810,6 @@ the inline methods when you often open and close small files however.
 The cost of the cryptographic handshake at the start of an @command{scp}
 session can begin to absorb the advantage that the lack of encoding and
 decoding presents.
-
-There are also two variants, @option{scp1} and @option{scp2}, that
-call @samp{ssh -1} and @samp{ssh -2}, respectively.  This way, you can
-explicitly select whether you want to use the SSH protocol version 1
-or 2 to connect to the remote host.  (You can also specify in
-@file{~/.ssh/config}, the SSH configuration file, which protocol
-should be used, and use the regular @option{scp} method.)
 
 All the @command{ssh} based methods support the @samp{-p} feature
 where you can specify a port number to connect to in the host name.
@@ -997,10 +1002,26 @@ name.
 @cindex method adb
 @cindex adb method
 
-This special method uses the Android Debug Bridge for connecting
-Android devices.  The Android Debug Bridge, part of the Android SDK,
-must be installed locally.  The variable @var{tramp-adb-sdk-dir} must
-be set to its installation directory.
+This special method uses the Android Debug Bridge for accessing
+Android devices.  The Android Debug Bridge must be installed locally.
+Some GNU/Linux distributions offer it for installation, otherwise it
+can be installed as part of the Android SDK.  If the @command{adb}
+program is not found via the @code{$PATH} environment variable, the
+variable @var{tramp-adb-program} must point to its absolute path.
+
+Tramp does not connect Android devices to @command{adb}.  This must be
+performed outside @value{emacsname}.  If there is exactly one Android
+device connected to @command{adb}, a host name is not needed in the
+remote file name.  The default @value{tramp} name to be used is
+@file{@trampfn{adb, , ,}} therefore.  Otherwise, one could find
+potential host names with the command @command{adb devices}.
+
+Usually, the @command{adb} method does not need any user name.  It
+runs under the permissions of the @command{adbd} process on the
+Android device.  If a user name is specified, @value{tramp} applies an
+@command{su} on the device.  This does not work with all Android
+devices, especially with unrooted ones.  In that case, an error
+message is displayed.
 
 @end table
 
@@ -1710,6 +1731,35 @@ connection related information for this host, and opens the
 connection again.
 
 
+@node Predefined connection information
+@section Setting own connection related information
+
+Sometimes, @var{tramp} is not able to detect correct connection
+related information.  In such cases, you could tell @var{tramp} which
+value it has to take.  Since this could result in errors, it has to be
+used with care.
+
+@vindex tramp-connection-properties
+Such settings can be performed via the list
+@code{tramp-connection-properties}.  An entry in this list has the
+form @code{(@var{regexp} @var{property} @var{value})}.  @var{regexp}
+matches remote file names for which a property shall be predefined.
+It can be @code{nil}.  @var{property} is a string, and @var{value} the
+corresponding value.  @var{property} could be any property found in
+the file @code{tramp-persistency-file-name}.
+
+A special property is @code{"busybox"}.  This must be set, if the
+remote host runs a very restricted busybox as shell, which closes the
+connection at will.  Since there is no reliable test for this,
+@var{tramp} must be indicated this way.  Example:
+
+@lisp
+(add-to-list 'tramp-connection-properties
+             (list (regexp-quote "@trampfn{ssh, user, randomhost.your.domain,}")
+                   "busybox" t))
+@end lisp
+
+
 @node Remote Programs
 @section How @value{tramp} finds and uses programs on the remote machine
 
@@ -1857,7 +1907,7 @@ key.
 
 @var{tramp-password-prompt-regexp} handles the detection of such
 requests for English environments.  When you use another localization
-of your (local or remote) host, you might need to adapt this. Example:
+of your (local or remote) host, you might need to adapt this.  Example:
 
 @lisp
 (setq
@@ -2031,7 +2081,8 @@ You can instruct @value{tramp} by this form:
 @end lisp
 
 @noindent
-with @samp{192.168.0.26} being the IP address of your Android device.
+with @samp{192.168.0.26} being the IP address of your Android device
+(@pxref{Predefined connection information}).
 
 The user settings for the @code{$PATH} environment variable must be
 preserved.  It has also been reported, that the commands in
@@ -2389,12 +2440,17 @@ using the @option{ssh} method to transfer files, and edit
 @file{.emacs} in my home directory I would specify the filename
 @file{@trampfn{ssh, daniel, melancholia, .emacs}}.
 
+@ifset emacs
+A remote filename containing a host name only, which is equal to a
+method name, is not allowed.  If such a host name is used, it must
+always be preceded by an explicit method name, like
+@file{@value{prefix}ssh@value{postfixhop}ssh@value{postfix}}.
+@end ifset
+
 Finally, for some methods it is possible to specify a different port
 number than the default one, given by the method.  This is specified
 by adding @file{#<port>} to the host name, like in @file{@trampfn{ssh,
 daniel, melancholia#42, .emacs}}.
-
-Note that @value{tramp} supports only filenames encoded in unibyte.
 
 
 @node Alternative Syntax
@@ -3099,6 +3155,45 @@ the job:
 Host *
      ServerAliveInterval 5
 @end example
+
+
+@item
+@value{tramp} does not use my @command{ssh} @code{ControlPath}
+
+Your @code{ControlPath} setting will be overwritten by @command{ssh}
+sessions initiated by @value{tramp}.  This is because a master
+session, initiated outside @value{emacsname}, could be closed, which
+would stall all other @command{ssh} sessions for that host inside
+@value{emacsname}.
+
+Consequently, if you connect to a remote host via @value{tramp}, you
+might be prompted for a password again, even if you have established
+already an @command{ssh} connection to that host.  Further
+@value{tramp} connections to that host, for example in order to run a
+process on that host, will reuse that initial @command{ssh}
+connection.
+
+If your @command{ssh} version supports the @code{ControlPersist}
+option, you could customize the variable
+@code{tramp-ssh-controlmaster-options} to use your @code{ControlPath},
+for example:
+
+@lisp
+(setq tramp-ssh-controlmaster-options
+      (concat
+        "-o ControlPath=/tmp/ssh-ControlPath-%%r@@%%h:%%p "
+        "-o ControlMaster=auto -o ControlPersist=yes"))
+@end lisp
+
+Note, that "%r", "%h" and "%p" must be encoded as "%%r", "%%h" and
+"%%p", respectively.  The entries of @code{ControlPath},
+@code{ControlMaster} and @code{ControlPersist} can be removed from
+this setting, if they are configured properly in your
+@file{~/.ssh/config}:
+
+@lisp
+(setq tramp-ssh-controlmaster-options "")
+@end lisp
 
 
 @item
@@ -3892,3 +3987,4 @@ for @value{emacsothername}.
 @c * Use `filename' resp. `file name' consistently.
 @c * Use `host' resp. `machine' consistently.
 @c * Consistent small or capitalized words especially in menus.
+@c * Make a unique declaration of @trampfn.

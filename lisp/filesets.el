@@ -1,4 +1,4 @@
-;;; filesets.el --- handle group of files
+;;; filesets.el --- handle group of files -*- coding: utf-8 -*-
 
 ;; Copyright (C) 2002-2013 Free Software Foundation, Inc.
 
@@ -149,7 +149,7 @@ is loaded before custom.el, set this variable to t.")
 (defun filesets-filter-list (lst cond-fn)
   "Remove all elements not conforming to COND-FN from list LST.
 COND-FN takes one argument: the current element."
-;  (remove* 'dummy lst :test (lambda (dummy elt)
+;  (cl-remove 'dummy lst :test (lambda (dummy elt)
 ;			      (not (funcall cond-fn elt)))))
   (let ((rv nil))
     (dolist (elt lst rv)
@@ -175,7 +175,7 @@ Like `some', return the first value of FSS-PRED that is non-nil."
       (let ((fss-rv (funcall fss-pred fss-this)))
 	(when fss-rv
 	  (throw 'exit fss-rv))))))
-;(fset 'filesets-some 'some) ;; or use the cl function
+;(fset 'filesets-some 'cl-some) ;; or use the cl function
 
 (defun filesets-member (fsm-item fsm-lst &rest fsm-keys)
   "Find the first occurrence of FSM-ITEM in FSM-LST.
@@ -186,7 +186,7 @@ key is supported."
     (filesets-ormap (lambda (fsm-this)
 		      (funcall fsm-test fsm-item fsm-this))
 		    fsm-lst)))
-;(fset 'filesets-member 'member*) ;; or use the cl function
+;(fset 'filesets-member 'cl-member) ;; or use the cl function
 
 (defun filesets-sublist (lst beg &optional end)
   "Get the sublist of LST from BEG to END - 1."
@@ -805,8 +805,8 @@ In order to view pdf or rtf files in an Emacs buffer, you could use these:
        (:match-number 2)
        (:get-file-name (lambda (master file)
 			 (filesets-which-file master file load-path))))))
-    ("^\\([A-Zƒ÷‹][a-z‰ˆ¸ﬂ]+\\([A-Zƒ÷‹][a-z‰ˆ¸ﬂ]+\\)+\\)$" t
-     (((:pattern "\\<\\([A-Zƒ÷‹][a-z‰ˆ¸ﬂ]+\\([A-Zƒ÷‹][a-z‰ˆ¸ﬂ]+\\)+\\)\\>")
+    ("^\\([A-Z√Ñ√ñ√ú][a-z√§√∂√º√ü]+\\([A-Z√Ñ√ñ√ú][a-z√§√∂√º√ü]+\\)+\\)$" t
+     (((:pattern "\\<\\([A-Z√Ñ√ñ√ú][a-z√§√∂√º√ü]+\\([A-Z√Ñ√ñ√ú][a-z√§√∂√º√ü]+\\)+\\)\\>")
        (:scan-depth 5)
        (:stubp (lambda (a b) (not (filesets-files-in-same-directory-p a b))))
        (:case-sensitive t)

@@ -233,6 +233,7 @@ regexp should probably be \".\" to specify a default browser."
 	  (function-item :tag "Galeon" :value  browse-url-galeon)
 	  (function-item :tag "Epiphany" :value  browse-url-epiphany)
 	  (function-item :tag "Netscape" :value  browse-url-netscape)
+	  (function-item :tag "eww" :value  eww-browse-url)
 	  (function-item :tag "Mosaic" :value  browse-url-mosaic)
 	  (function-item :tag "Mosaic using CCI" :value  browse-url-cci)
 	  (function-item :tag "Text browser in an xterm window"
@@ -658,9 +659,10 @@ regarding its parameter treatment."
 ;; URL input
 
 (defun browse-url-url-at-point ()
-  (let ((url (thing-at-point 'url)))
-    (set-text-properties 0 (length url) nil url)
-    url))
+  (or (thing-at-point 'url t)
+      ;; assume that the user is pointing at something like gnu.org/gnu
+      (let ((f (thing-at-point 'filename t)))
+        (and f (concat "http://" f)))))
 
 ;; Having this as a separate function called by the browser-specific
 ;; functions allows them to be stand-alone commands, making it easier

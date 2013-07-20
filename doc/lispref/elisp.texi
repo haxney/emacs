@@ -115,7 +115,7 @@ developing GNU and promoting software freedom.''
 @end quotation
 @end copying
 
-@documentencoding ISO-8859-1
+@documentencoding UTF-8
 
 @dircategory GNU Emacs Lisp
 @direntry
@@ -156,6 +156,17 @@ Cover art by Etienne Suvasa.
 @ifnottex
 @node Top
 @top Emacs Lisp
+
+@ifset WWW_GNU_ORG
+@html
+<p>The homepage for GNU Emacs is at
+<a href="/software/emacs/">http://www.gnu.org/software/emacs/</a>.<br>
+For information on using Emacs, refer to the
+<a href="/software/emacs/manual/emacs.html">Emacs Manual</a>.<br>
+To view this manual in other formats, click
+<a href="/software/emacs/manual/elisp.html">here</a>.
+@end html
+@end ifset
 
 @insertcopying
 @end ifnottex

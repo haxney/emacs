@@ -1002,7 +1002,7 @@ POS and RES.")
     (let ((win (get-buffer-window buffer 0)))
       (if win (set-window-point win pos)))
     (if compilation-auto-jump-to-first-error
-	(compile-goto-error))))
+	(compile-goto-error nil t))))
 
 ;; This function is the central driver, called when font-locking to gather
 ;; all information needed to later jump to corresponding source code.
@@ -1814,6 +1814,7 @@ Returns the compilation buffer created."
     (define-key map [follow-link] 'mouse-face)
     (define-key map "\C-c\C-c" 'compile-goto-error)
     (define-key map "\C-m" 'compile-goto-error)
+    (define-key map "\C-o" 'compilation-display-error)
     (define-key map "\C-c\C-k" 'kill-compilation)
     (define-key map "\M-n" 'compilation-next-error)
     (define-key map "\M-p" 'compilation-previous-error)
@@ -1858,6 +1859,7 @@ Returns the compilation buffer created."
     (define-key map [follow-link] 'mouse-face)
     (define-key map "\C-c\C-c" 'compile-goto-error)
     (define-key map "\C-m" 'compile-goto-error)
+    (define-key map "\C-o" 'compilation-display-error)
     (define-key map "\C-c\C-k" 'kill-compilation)
     (define-key map "\M-n" 'compilation-next-error)
     (define-key map "\M-p" 'compilation-previous-error)
@@ -2299,6 +2301,12 @@ Prefix arg N says how many files to move backwards (or forwards, if negative)."
   (interactive "p")
   (compilation-next-file (- n)))
 
+(defun compilation-display-error ()
+  "Display the source for current error in another window."
+  (interactive)
+  (setq compilation-current-error (point))
+  (next-error-no-select 0))
+
 (defun kill-compilation ()
   "Kill the process made by the \\[compile] or \\[grep] commands."
   (interactive)
@@ -2309,7 +2317,7 @@ Prefix arg N says how many files to move backwards (or forwards, if negative)."
 
 (defalias 'compile-mouse-goto-error 'compile-goto-error)
 
-(defun compile-goto-error (&optional event)
+(defun compile-goto-error (&optional event nomsg)
   "Visit the source for the error message at point.
 Use this command in a compilation log buffer.  Sets the mark at point there."
   (interactive (list last-input-event))
@@ -2320,7 +2328,7 @@ Use this command in a compilation log buffer.  Sets the mark at point there."
   (if (get-text-property (point) 'compilation-directory)
       (dired-other-window
        (car (get-text-property (point) 'compilation-directory)))
-    (push-mark)
+    (push-mark nil nomsg)
     (setq compilation-current-error (point))
     (next-error-internal)))
 
@@ -2374,10 +2382,12 @@ This is the value of `next-error-function' in Compilation buffers."
                  ;;            (setq timestamp compilation-buffer-modtime)))
                  )
       (with-current-buffer
-          (compilation-find-file
-           marker
-           (caar (compilation--loc->file-struct loc))
-           (cadr (car (compilation--loc->file-struct loc))))
+          (apply #'compilation-find-file
+                 marker
+                 (caar (compilation--loc->file-struct loc))
+                 (cadr (car (compilation--loc->file-struct loc)))
+                 (compilation--file-struct->formats
+                  (compilation--loc->file-struct loc)))
         (let ((screen-columns
                ;; Obey the compilation-error-screen-columns of the target
                ;; buffer if its major mode set it buffer-locally.

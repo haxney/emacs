@@ -77,7 +77,7 @@
 
 (defvar finder-mode-map
   (let ((map (make-sparse-keymap))
-	(menu-map (make-sparse-keymap "Finder")))
+        (menu-map (make-sparse-keymap "Finder")))
     (define-key map " "	'finder-select)
     (define-key map "f"	'finder-select)
     (define-key map [follow-link] 'mouse-face)
@@ -93,16 +93,16 @@
       (cons "Finder" menu-map))
     (define-key menu-map [finder-exit]
       '(menu-item "Quit" finder-exit
-		  :help "Exit Finder mode"))
+                  :help "Exit Finder mode"))
     (define-key menu-map [finder-summary]
       '(menu-item "Summary" finder-summary
-		  :help "Summary item on current line in a finder buffer"))
+                  :help "Summary item on current line in a finder buffer"))
     (define-key menu-map [finder-list-keywords]
       '(menu-item "List keywords" finder-list-keywords
-		  :help "Display descriptions of the keywords in the Finder buffer"))
+                  :help "Display descriptions of the keywords in the Finder buffer"))
     (define-key menu-map [finder-select]
       '(menu-item "Select" finder-select
-		  :help "Select item on current line in a finder buffer"))
+                  :help "Select item on current line in a finder buffer"))
     map))
 
 (defvar finder-mode-syntax-table
@@ -175,59 +175,55 @@ from; the default is `load-path'."
   (setq package--builtins nil)
   (setq finder-keywords-hash (make-hash-table :test 'eq))
   (let ((el-file-regexp "^\\([^=].*\\)\\.el\\(\\.\\(gz\\|Z\\)\\)?$")
-	package-override files base-name processed
-	summary keywords package version entry desc)
+        package-override files base-name processed
+        summary keywords package version entry desc)
     (dolist (d (or dirs load-path))
       (when (file-exists-p (directory-file-name d))
-	(message "Directory %s" d)
-	(setq package-override
-	      (intern-soft
-	       (cdr-safe
-		(assoc (file-name-nondirectory (directory-file-name d))
-		       finder--builtins-alist))))
-	(setq files (directory-files d nil el-file-regexp))
-	(dolist (f files)
-	  (unless (or (string-match finder-no-scan-regexp f)
-		      (null (setq base-name
-				  (and (string-match el-file-regexp f)
-				       (intern (match-string 1 f)))))
-		      (memq base-name processed))
-	    (push base-name processed)
-	    (with-temp-buffer
-	      (insert-file-contents (expand-file-name f d))
-	      (setq summary  (lm-synopsis)
-		    keywords (mapcar 'intern (lm-keywords-list))
-		    package  (or package-override
-				 (let ((str (lm-header "package")))
-				   (if str (intern str)))
-				 base-name)
-		    version  (lm-header "version")))
-	    (when summary
-	      (setq version (ignore-errors (version-to-list version)))
-	      (setq entry (assq package package--builtins))
-	      (cond ((null entry)
-		     (push (cons package (package-desc-create
-					  :name package
-					  :version version
-					  :summary summary
-					  :kind 'builtin
-					  :archive "builtin"))
-			   package--builtins))
-		    ((eq base-name package)
-		     (setq desc (cdr entry))
-		     (setf (package-desc-version desc) version
-			   (package-desc-summary desc) summary)))
-	      (dolist (kw keywords)
-		(puthash kw
-			 (cons package
-			       (delq package
-				     (gethash kw finder-keywords-hash)))
-			 finder-keywords-hash))))))))
+        (message "Directory %s" d)
+        (setq package-override
+              (intern-soft
+               (cdr-safe
+                (assoc (file-name-nondirectory (directory-file-name d))
+                       finder--builtins-alist))))
+        (setq files (directory-files d nil el-file-regexp))
+        (dolist (f files)
+          (unless (or (string-match finder-no-scan-regexp f)
+                      (null (setq base-name
+                                  (and (string-match el-file-regexp f)
+                                       (intern (match-string 1 f)))))
+                      (memq base-name processed))
+            (push base-name processed)
+            (with-temp-buffer
+              (insert-file-contents (expand-file-name f d))
+              (setq summary  (lm-synopsis)
+                    keywords (mapcar 'intern (lm-keywords-list))
+                    package  (or package-override
+                                 (let ((str (lm-header "package")))
+                                   (if str (intern str)))
+                                 base-name)
+                    version  (lm-header "version")))
+            (when summary
+              (setq version (ignore-errors (version-to-list version)))
+              (setq entry (assq package package--builtins))
+              (cond ((null entry)
+                     (push (cons package
+                                 (package-make-builtin version summary))
+                           package--builtins))
+                    ((eq base-name package)
+                     (setq desc (cdr entry))
+                     (setf (package-desc-version desc) version
+                           (package-desc-summary desc) summary)))
+              (dolist (kw keywords)
+                (puthash kw
+                         (cons package
+                               (delq package
+                                     (gethash kw finder-keywords-hash)))
+                         finder-keywords-hash))))))))
 
   (setq package--builtins
-	(sort package--builtins
-	      (lambda (a b) (string< (symbol-name (car a))
-				     (symbol-name (car b))))))
+        (sort package--builtins
+              (lambda (a b) (string< (symbol-name (car a))
+                                     (symbol-name (car b))))))
 
   (save-excursion
     (find-file generated-finder-keywords-file)
@@ -236,6 +232,9 @@ from; the default is `load-path'."
     (insert (autoload-rubric generated-finder-keywords-file
                              "keyword-to-package mapping" t))
     (search-backward "")
+    ;; FIXME: Now that we have package--builtin-versions, package--builtins is
+    ;; only needed to get the list of unversioned packages and to get the
+    ;; summary description of each package.
     (insert "(setq package--builtins '(\n")
     (dolist (package package--builtins)
       (insert "  ")
@@ -271,17 +270,17 @@ from; the default is `load-path'."
     (if (looking-at "[ \t]") (forward-line -1))
     (unless finder-help-echo
       (setq finder-help-echo
-	    (let* ((keys1 (where-is-internal 'finder-select
-					     finder-mode-map))
-		   (keys (nconc (where-is-internal
-				 'finder-mouse-select finder-mode-map)
-				keys1)))
-	      (concat (mapconcat 'key-description keys ", ")
-		      ": select item"))))
+            (let* ((keys1 (where-is-internal 'finder-select
+                                             finder-mode-map))
+                   (keys (nconc (where-is-internal
+                                 'finder-mouse-select finder-mode-map)
+                                keys1)))
+              (concat (mapconcat 'key-description keys ", ")
+                      ": select item"))))
     (add-text-properties
      (line-beginning-position) (line-end-position)
      '(mouse-face highlight
-		  help-echo finder-help-echo))))
+                  help-echo finder-help-echo))))
 
 (defun finder-unknown-keywords ()
   "Return an alist of unknown keywords and number of their occurrences.
@@ -289,9 +288,9 @@ Unknown keywords are those present in `finder-keywords-hash' but
 not `finder-known-keywords'."
   (let (alist)
     (maphash (lambda (kw packages)
-	       (unless (assq kw finder-known-keywords)
-		 (push (cons kw (length packages)) alist)))
-	     finder-keywords-hash)
+               (unless (assq kw finder-known-keywords)
+                 (push (cons kw (length packages)) alist)))
+             finder-keywords-hash)
     (sort alist (lambda (a b) (string< (car a) (car b))))))
 
 ;;;###autoload
@@ -305,21 +304,21 @@ not `finder-known-keywords'."
     (let ((inhibit-read-only t))
       (erase-buffer)
       (dolist (assoc finder-known-keywords)
-	(let ((keyword (car assoc)))
-	  (insert (propertize (symbol-name keyword)
-			      'font-lock-face 'font-lock-constant-face))
-	  (finder-insert-at-column 14 (concat (cdr assoc) "\n"))
-	  (finder-mouse-face-on-line)))
+        (let ((keyword (car assoc)))
+          (insert (propertize (symbol-name keyword)
+                              'font-lock-face 'font-lock-constant-face))
+          (finder-insert-at-column 14 (concat (cdr assoc) "\n"))
+          (finder-mouse-face-on-line)))
       (goto-char (point-min))
       (setq finder-headmark (point)
-	    buffer-read-only t)
+            buffer-read-only t)
       (set-buffer-modified-p nil)
       (balance-windows)
       (finder-summary))))
 
 (defun finder-list-matches (key)
   (let* ((id (intern key))
-	 (packages (gethash id finder-keywords-hash)))
+         (packages (gethash id finder-keywords-hash)))
     (unless packages
       (error "No packages matching key `%s'" key))
     (package-show-package-list packages)))
@@ -340,7 +339,7 @@ FILE should be in a form suitable for passing to `locate-library'."
   (interactive
    (list
     (completing-read "Library name: "
-		     (apply-partially 'locate-file-completion-table
+                     (apply-partially 'locate-file-completion-table
                                       (or find-function-source-path load-path)
                                       (find-library-suffixes)))))
   (let ((str (lm-commentary (find-library-name file))))
@@ -375,11 +374,11 @@ FILE should be in a form suitable for passing to `locate-library'."
 
 (defun finder-current-item ()
   (let ((key (save-excursion
-	       (beginning-of-line)
-	       (current-word))))
+               (beginning-of-line)
+               (current-word))))
     (if (or (and finder-headmark (< (point) finder-headmark))
-	    (zerop (length key)))
-	(error "No keyword or filename on this line")
+            (zerop (length key)))
+        (error "No keyword or filename on this line")
       key)))
 
 (defun finder-select ()
@@ -387,8 +386,8 @@ FILE should be in a form suitable for passing to `locate-library'."
   (interactive)
   (let ((key (finder-current-item)))
       (if (string-match "\\.el$" key)
-	  (finder-commentary key)
-	(finder-list-matches key))))
+          (finder-commentary key)
+        (finder-list-matches key))))
 
 (defun finder-mouse-select (event)
   "Select item in a finder buffer with the mouse."
@@ -410,7 +409,7 @@ FILE should be in a form suitable for passing to `locate-library'."
 \\[finder-exit]	exit Finder mode and kill the Finder buffer."
   :syntax-table finder-mode-syntax-table
   (setq buffer-read-only t
-	buffer-undo-list t)
+        buffer-undo-list t)
   (set (make-local-variable 'finder-headmark) nil))
 
 (defun finder-summary ()

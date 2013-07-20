@@ -310,8 +310,10 @@ See `run-hooks'."
 	"(" (regexp-opt
 	     '("begin" "call-with-current-continuation" "call/cc"
 	       "call-with-input-file" "call-with-output-file" "case" "cond"
-	       "do" "else" "for-each" "if" "lambda"
+	       "do" "else" "for-each" "if" "lambda" "λ"
 	       "let" "let*" "let-syntax" "letrec" "letrec-syntax"
+	       ;; R6RS library subforms.
+	       "export" "import"
 	       ;; SRFI 11 usage comes up often enough.
 	       "let-values" "let*-values"
 	       ;; Hannes Haug <hannes.haug@student.uni-tuebingen.de> wants:
@@ -330,6 +332,10 @@ See `run-hooks'."
       ;;
       ;; Scheme `:' and `#:' keywords as builtins.
       '("\\<#?:\\sw+\\>" . font-lock-builtin-face)
+      ;; R6RS library declarations.
+      '("(\\(\\<library\\>\\)\\s-*(?\\(\\sw+\\)?"
+	(1 font-lock-keyword-face)
+	(2 font-lock-type-face))
       )))
   "Gaudy expressions to highlight in Scheme modes.")
 
@@ -410,6 +416,7 @@ that variable's value is a string."
 (put 'make 'scheme-indent-function 1)
 (put 'style 'scheme-indent-function 1)
 (put 'root 'scheme-indent-function 1)
+(put 'λ 'scheme-indent-function 1)
 
 (defvar dsssl-font-lock-keywords
   (eval-when-compile
@@ -535,6 +542,7 @@ indentation."
 (put 'letrec-syntax 'scheme-indent-function 1)
 (put 'syntax-rules 'scheme-indent-function 1)
 (put 'syntax-case 'scheme-indent-function 2) ; not r5rs
+(put 'library 'scheme-indent-function 1) ; R6RS
 
 (put 'call-with-input-file 'scheme-indent-function 1)
 (put 'with-input-from-file 'scheme-indent-function 1)

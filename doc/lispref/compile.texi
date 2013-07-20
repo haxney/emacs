@@ -181,8 +181,8 @@ after compiling it.  Interactively, @var{load} is the prefix argument.
 
 @example
 @group
-% ls -l push*
--rw-r--r--  1 lewis     791 Oct  5 20:31 push.el
+$ ls -l push*
+-rw-r--r-- 1 lewis lewis 791 Oct  5 20:31 push.el
 @end group
 
 @group
@@ -191,9 +191,9 @@ after compiling it.  Interactively, @var{load} is the prefix argument.
 @end group
 
 @group
-% ls -l push*
--rw-r--r--  1 lewis     791 Oct  5 20:31 push.el
--rw-rw-rw-  1 lewis     638 Oct  8 20:25 push.elc
+$ ls -l push*
+-rw-r--r-- 1 lewis lewis 791 Oct  5 20:31 push.el
+-rw-rw-rw- 1 lewis lewis 638 Oct  8 20:25 push.elc
 @end group
 @end example
 @end deffn
@@ -232,7 +232,7 @@ If @var{noforce} is non-@code{nil}, this function does not recompile
 files that have an up-to-date @samp{.elc} file.
 
 @example
-% emacs -batch -f batch-byte-compile *.el
+$ emacs -batch -f batch-byte-compile *.el
 @end example
 @end defun
 
@@ -514,6 +514,7 @@ one you intend to suppress.
 @section Byte-Code Function Objects
 @cindex compiled function
 @cindex byte-code function
+@cindex byte-code object
 
   Byte-compiled functions have a special data type: they are
 @dfn{byte-code function objects}.  Whenever such an object appears as
@@ -606,8 +607,9 @@ name of an existing buffer.  Then the output goes there, at point, and
 point is left before the output.
 
 The argument @var{object} can be a function name, a lambda expression
-or a byte-code object.  If it is a lambda expression, @code{disassemble}
-compiles it and disassembles the resulting compiled code.
+(@pxref{Lambda Expressions}), or a byte-code object (@pxref{Byte-Code
+Objects}).  If it is a lambda expression, @code{disassemble} compiles
+it and disassembles the resulting compiled code.
 @end deffn
 
   Here are two examples of using the @code{disassemble} function.  We

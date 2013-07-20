@@ -95,7 +95,7 @@ When this variable is non-nil, its value is considered to be a \"good\"
 length (in seconds) for a break initiated by the command `type-break',
 overriding `type-break-good-rest-interval'.  This provides querying of
 break interruptions when `type-break-good-rest-interval' is nil."
-  :type 'integer
+  :type '(choice (const nil) integer)
   :group 'type-break)
 
 (defcustom type-break-keystroke-threshold
@@ -204,11 +204,11 @@ key is pressed."
   :type 'boolean
   :group 'type-break)
 
-(defcustom type-break-file-name (convert-standard-filename "~/.type-break")
+(defcustom type-break-file-name
+  (locate-user-emacs-file "type-break" ".type-break")
   "Name of file used to save state across sessions.
 If this is nil, no data will be saved across sessions."
-  :type 'file
-  :group 'type-break)
+  :type 'file)
 
 (defvar type-break-post-command-hook '(type-break-check)
   "Hook run indirectly by `post-command-hook' for typing break functions.
@@ -418,7 +418,7 @@ Variables controlling the display of messages in the mode line include:
         `global-mode-string'
         `type-break-mode-line-break-message'
         `type-break-mode-line-warning'"
-  :global t)
+  :global t :group 'type-break)
 
 (define-minor-mode type-break-query-mode
   "Toggle typing break queries.
@@ -428,7 +428,7 @@ enable them if ARG is omitted or nil.
 
 The user may also enable or disable this mode simply by setting
 the variable of the same name."
-  :global t)
+  :global t :group 'type-break)
 
 
 ;;; session file functions

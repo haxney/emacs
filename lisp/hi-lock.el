@@ -37,18 +37,18 @@
 ;;
 ;;    In program source code highlight a variable to quickly see all
 ;;    places it is modified or referenced:
-;;    M-x highlight-regexp ground_contact_switches_closed RET RET
+;;    M-x highlight-regexp RET ground_contact_switches_closed RET RET
 ;;
 ;;    In a shell or other buffer that is showing lots of program
 ;;    output, highlight the parts of the output you're interested in:
-;;    M-x highlight-regexp Total execution time [0-9]+ RET hi-blue-b RET
+;;    M-x highlight-regexp RET Total execution time [0-9]+ RET hi-blue-b RET
 ;;
 ;;    In buffers displaying tables, highlight the lines you're interested in:
-;;    M-x highlight-lines-matching-regexp January 2000 RET hi-black-b RET
+;;    M-x highlight-lines-matching-regexp RET January 2000 RET hi-black-b RET
 ;;
 ;;    When writing text, highlight personal cliches.  This can be
 ;;    amusing.
-;;    M-x highlight-phrase as can be seen RET RET
+;;    M-x highlight-phrase RET as can be seen RET RET
 ;;
 ;;  Setup:
 ;;
@@ -252,6 +252,10 @@ a library is being loaded.")
       '(menu-item "Highlight Lines..." highlight-lines-matching-regexp
         :help "Highlight lines containing match of PATTERN (a regexp)."))
 
+    (define-key-after map [highlight-symbol-at-point]
+      '(menu-item "Highlight Symbol at Point" highlight-symbol-at-point
+        :help "Highlight symbol found near point without prompting."))
+
     (define-key-after map [unhighlight-regexp]
       '(menu-item "Remove Highlighting..." unhighlight-regexp
         :help "Remove previously entered highlighting pattern."
@@ -274,10 +278,31 @@ a library is being loaded.")
     (define-key map "\C-xwl" 'highlight-lines-matching-regexp)
     (define-key map "\C-xwp" 'highlight-phrase)
     (define-key map "\C-xwh" 'highlight-regexp)
+    (define-key map "\C-xw." 'highlight-symbol-at-point)
     (define-key map "\C-xwr" 'unhighlight-regexp)
     (define-key map "\C-xwb" 'hi-lock-write-interactive-patterns)
     map)
   "Key map for hi-lock.")
+
+(defvar hi-lock-read-regexp-defaults-function
+  'hi-lock-read-regexp-defaults
+  "Function that provides default regexp(s) for highlighting commands.
+This function should take no arguments and return one of nil, a
+regexp or a list of regexps for use with highlighting commands -
+`hi-lock-face-phrase-buffer', `hi-lock-line-face-buffer' and
+`hi-lock-face-buffer'.  The return value of this function is used
+as DEFAULTS param of `read-regexp' while executing the
+highlighting command.  This function is called only during
+interactive use.  
+
+For example, to highlight at symbol at point use
+
+    \(setq hi-lock-read-regexp-defaults-function 
+	  'find-tag-default-as-regexp\)
+
+If you need different defaults for different highlighting
+operations, use `this-command' to identify the command under
+execution.")
 
 ;; Visible Functions
 
@@ -312,6 +337,10 @@ which can be called interactively, are:
 
 \\[highlight-lines-matching-regexp] REGEXP FACE
   Highlight lines containing matches of REGEXP in current buffer with FACE.
+
+\\[highlight-symbol-at-point]
+  Highlight the symbol found near point without prompting, using the next
+  available face automatically.
 
 \\[unhighlight-regexp] REGEXP
   Remove highlighting on matches of REGEXP in current buffer.
@@ -369,7 +398,9 @@ versions before 22 use the following in your init file:
 	(define-key-after menu-bar-edit-menu [hi-lock]
 	  (cons "Regexp Highlighting" hi-lock-menu))
 	(hi-lock-find-patterns)
-	(add-hook 'font-lock-mode-hook 'hi-lock-font-lock-hook nil t))
+        (add-hook 'font-lock-mode-hook 'hi-lock-font-lock-hook nil t)
+        ;; Remove regexps from font-lock-keywords (bug#13891).
+	(add-hook 'change-major-mode-hook (lambda () (hi-lock-mode -1)) nil t))
     ;; Turned off.
     (when (or hi-lock-interactive-patterns
 	      hi-lock-file-patterns)
@@ -399,17 +430,18 @@ versions before 22 use the following in your init file:
 ;;;###autoload
 (defun hi-lock-line-face-buffer (regexp &optional face)
   "Set face of all lines containing a match of REGEXP to FACE.
-Interactively, prompt for REGEXP then FACE, using a buffer-local
-history list for REGEXP and a global history list for FACE.
+Interactively, prompt for REGEXP then FACE.  Use
+`hi-lock-read-regexp-defaults-function' to retrieve default
+value(s) of REGEXP.  Use the global history list for FACE.
 
-If Font Lock mode is enabled in the buffer, it is used to
-highlight REGEXP.  If Font Lock mode is disabled, overlays are
-used for highlighting; in this case, the highlighting will not be
-updated as you type."
+Use Font lock mode, if enabled, to highlight REGEXP.  Otherwise,
+use overlays for highlighting.  If overlays are used, the
+highlighting will not update as you type."
   (interactive
    (list
     (hi-lock-regexp-okay
-     (read-regexp "Regexp to highlight line" (car regexp-history)))
+     (read-regexp "Regexp to highlight line"
+		  (funcall hi-lock-read-regexp-defaults-function)))
     (hi-lock-read-face-name)))
   (or (facep face) (setq face 'hi-yellow))
   (unless hi-lock-mode (hi-lock-mode 1))
@@ -424,17 +456,18 @@ updated as you type."
 ;;;###autoload
 (defun hi-lock-face-buffer (regexp &optional face)
   "Set face of each match of REGEXP to FACE.
-Interactively, prompt for REGEXP then FACE, using a buffer-local
-history list for REGEXP and a global history list for FACE.
+Interactively, prompt for REGEXP then FACE.  Use
+`hi-lock-read-regexp-defaults-function' to retrieve default
+value(s) REGEXP.  Use the global history list for FACE.
 
-If Font Lock mode is enabled in the buffer, it is used to
-highlight REGEXP.  If Font Lock mode is disabled, overlays are
-used for highlighting; in this case, the highlighting will not be
-updated as you type."
+Use Font lock mode, if enabled, to highlight REGEXP.  Otherwise,
+use overlays for highlighting.  If overlays are used, the
+highlighting will not update as you type."
   (interactive
    (list
     (hi-lock-regexp-okay
-     (read-regexp "Regexp to highlight" (car regexp-history)))
+     (read-regexp "Regexp to highlight"
+		  (funcall hi-lock-read-regexp-defaults-function)))
     (hi-lock-read-face-name)))
   (or (facep face) (setq face 'hi-yellow))
   (unless hi-lock-mode (hi-lock-mode 1))
@@ -445,22 +478,47 @@ updated as you type."
 ;;;###autoload
 (defun hi-lock-face-phrase-buffer (regexp &optional face)
   "Set face of each match of phrase REGEXP to FACE.
-If called interactively, replaces whitespace in REGEXP with
-arbitrary whitespace and makes initial lower-case letters case-insensitive.
+Interactively, prompt for REGEXP then FACE.  Use
+`hi-lock-read-regexp-defaults-function' to retrieve default
+value(s) of REGEXP.  Use the global history list for FACE.  When
+called interactively, replace whitespace in user provided regexp
+with arbitrary whitespace and make initial lower-case letters
+case-insensitive before highlighting with `hi-lock-set-pattern'.
 
-If Font Lock mode is enabled in the buffer, it is used to
-highlight REGEXP.  If Font Lock mode is disabled, overlays are
-used for highlighting; in this case, the highlighting will not be
-updated as you type."
+Use Font lock mode, if enabled, to highlight REGEXP.  Otherwise,
+use overlays for highlighting.  If overlays are used, the
+highlighting will not update as you type."
   (interactive
    (list
     (hi-lock-regexp-okay
      (hi-lock-process-phrase
-      (read-regexp "Phrase to highlight" (car regexp-history))))
+      (read-regexp "Phrase to highlight"
+		   (funcall hi-lock-read-regexp-defaults-function))))
     (hi-lock-read-face-name)))
   (or (facep face) (setq face 'hi-yellow))
   (unless hi-lock-mode (hi-lock-mode 1))
   (hi-lock-set-pattern regexp face))
+
+;;;###autoload
+(defalias 'highlight-symbol-at-point 'hi-lock-face-symbol-at-point)
+;;;###autoload
+(defun hi-lock-face-symbol-at-point ()
+  "Set face of each match of the symbol at point.
+Use `find-tag-default-as-regexp' to retrieve the symbol at point.
+Use non-nil `hi-lock-auto-select-face' to retrieve the next face
+from `hi-lock-face-defaults' automatically.
+
+Use Font lock mode, if enabled, to highlight symbol at point.
+Otherwise, use overlays for highlighting.  If overlays are used,
+the highlighting will not update as you type."
+  (interactive)
+  (let* ((regexp (hi-lock-regexp-okay
+		  (find-tag-default-as-regexp)))
+	 (hi-lock-auto-select-face t)
+	 (face (hi-lock-read-face-name)))
+    (or (facep face) (setq face 'hi-yellow))
+    (unless hi-lock-mode (hi-lock-mode 1))
+    (hi-lock-set-pattern regexp face)))
 
 (defun hi-lock-keyword->face (keyword)
   (cadr (cadr (cadr keyword))))    ; Keyword looks like (REGEXP (0 'FACE) ...).
@@ -621,6 +679,11 @@ not suitable."
   (if (string-match regexp "")
       (error "Regexp cannot match an empty string")
     regexp))
+
+(defun hi-lock-read-regexp-defaults ()
+  "Return the latest regexp from `regexp-history'.
+See `hi-lock-read-regexp-defaults-function' for details."
+  (car regexp-history))
 
 (defun hi-lock-read-face-name ()
   "Return face for interactive highlighting.

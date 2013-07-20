@@ -33,6 +33,7 @@
 ;;		- the mark & mark-active
 ;;		- buffer-read-only
 ;;		- some local variables
+;;	- frame and window configuration
 
 ;; To use this, use customize to turn on desktop-save-mode or add the
 ;; following line somewhere in your init file:
@@ -127,7 +128,6 @@
 ;; ---------------------------------------------------------------------------
 ;; TODO:
 ;;
-;; Save window configuration.
 ;; Recognize more minor modes.
 ;; Save mark rings.
 
@@ -188,6 +188,17 @@ determine where the desktop is saved."
     (const :tag "Never save" nil))
   :group 'desktop
   :version "22.1")
+
+(defcustom desktop-auto-save-timeout nil
+  "Number of seconds between auto-saves of the desktop.
+Zero or nil means disable timer-based auto-saving."
+  :type '(choice (const :tag "Off" nil)
+                 (integer :tag "Seconds"))
+  :set (lambda (symbol value)
+         (set-default symbol value)
+         (ignore-errors (desktop-auto-save-set-timer)))
+  :group 'desktop
+  :version "24.4")
 
 (defcustom desktop-load-locked-desktop 'ask
   "Specifies whether the desktop should be loaded if locked.
@@ -358,6 +369,32 @@ modes are restored automatically; they should not be listed here."
   :type '(repeat symbol)
   :group 'desktop)
 
+(defcustom desktop-restore-frames t
+  "When non-nil, save window/frame configuration to desktop file."
+  :type 'boolean
+  :group 'desktop
+  :version "24.4")
+
+(defcustom desktop-restore-in-current-display nil
+  "If t, frames are restored in the current display.
+If nil, frames are restored, if possible, in their original displays.
+If `delete', frames on other displays are deleted instead of restored."
+  :type '(choice (const :tag "Restore in current display" t)
+		 (const :tag "Restore in original display" nil)
+		 (const :tag "Delete frames in other displays" 'delete))
+  :group 'desktop
+  :version "24.4")
+
+(defcustom desktop-restoring-reuses-frames t
+  "If t, restoring frames reuses existing frames.
+If nil, existing frames are deleted.
+If `keep', existing frames are kept and not reused."
+  :type '(choice (const :tag "Reuse existing frames" t)
+		 (const :tag "Delete existing frames" nil)
+		 (const :tag "Keep existing frames" 'keep))
+  :group 'desktop
+  :version "24.4")
+
 (defcustom desktop-file-name-format 'absolute
   "Format in which desktop file names should be saved.
 Possible values are:
@@ -390,9 +427,8 @@ See `desktop-restore-eager'."
   :version "22.1")
 
 ;;;###autoload
-(defvar desktop-save-buffer nil
+(defvar-local desktop-save-buffer nil
   "When non-nil, save buffer status in desktop file.
-This variable becomes buffer local when set.
 
 If the value is a function, it is called by `desktop-save' with argument
 DESKTOP-DIRNAME to obtain auxiliary information to save in the desktop
@@ -404,7 +440,6 @@ When file names are returned, they should be formatted using the call
 Later, when `desktop-read' evaluates the desktop file, auxiliary information
 is passed as the argument DESKTOP-BUFFER-MISC to functions in
 `desktop-buffer-mode-handlers'.")
-(make-variable-buffer-local 'desktop-save-buffer)
 (make-obsolete-variable 'desktop-buffer-modes-to-save
                         'desktop-save-buffer "22.1")
 (make-obsolete-variable 'desktop-buffer-misc-functions
@@ -539,6 +574,13 @@ DIRNAME omitted or nil means use `desktop-dirname'."
 (defvar desktop-delay-hook nil
   "Hooks run after all buffers are loaded; intended for internal use.")
 
+(defvar desktop-file-checksum nil
+  "Checksum of the last auto-saved contents of the desktop file.
+Used to avoid writing contents unchanged between auto-saves.")
+
+(defvar desktop--saved-states nil
+  "Saved window/frame state.  Internal use only.")
+
 ;; ----------------------------------------------------------------------------
 ;; Desktop file conflict detection
 (defvar desktop-file-modtime nil
@@ -549,15 +591,15 @@ Used to detect desktop file conflicts.")
   "Return the PID of the Emacs process that owns the desktop file in DIRNAME.
 Return nil if no desktop file found or no Emacs process is using it.
 DIRNAME omitted or nil means use `desktop-dirname'."
-  (let (owner)
-    (and (file-exists-p (desktop-full-lock-name dirname))
-	 (condition-case nil
-	     (with-temp-buffer
-	       (insert-file-contents-literally (desktop-full-lock-name dirname))
-	       (goto-char (point-min))
-	       (setq owner (read (current-buffer)))
-	       (integerp owner))
-	   (error nil))
+  (let (owner
+	(file (desktop-full-lock-name dirname)))
+    (and (file-exists-p file)
+	 (ignore-errors
+	   (with-temp-buffer
+	     (insert-file-contents-literally file)
+	     (goto-char (point-min))
+	     (setq owner (read (current-buffer)))
+	     (integerp owner)))
 	 owner)))
 
 (defun desktop-claim-lock (&optional dirname)
@@ -603,7 +645,7 @@ Furthermore, it clears the variables listed in `desktop-globals-to-clear'."
       (let ((bufname (buffer-name (car buffers))))
          (or
            (null bufname)
-           (string-match preserve-regexp bufname)
+           (string-match-p preserve-regexp bufname)
            ;; Don't kill buffers made for internal purposes.
            (and (not (equal bufname "")) (eq (aref bufname 0) ?\s))
            (kill-buffer (car buffers))))
@@ -697,83 +739,68 @@ is nil, ask the user where to save the desktop."
      ll)))
 
 ;; ----------------------------------------------------------------------------
-(defun desktop-internal-v2s (value)
-  "Convert VALUE to a pair (QUOTE . TXT); (eval (read TXT)) gives VALUE.
-TXT is a string that when read and evaluated yields VALUE.
+(defun desktop--v2s (value)
+  "Convert VALUE to a pair (QUOTE . SEXP); (eval SEXP) gives VALUE.
+SEXP is an sexp that when evaluated yields VALUE.
 QUOTE may be `may' (value may be quoted),
 `must' (value must be quoted), or nil (value must not be quoted)."
   (cond
     ((or (numberp value) (null value) (eq t value) (keywordp value))
-     (cons 'may (prin1-to-string value)))
+     (cons 'may value))
     ((stringp value)
      (let ((copy (copy-sequence value)))
        (set-text-properties 0 (length copy) nil copy)
-       ;; Get rid of text properties because we cannot read them
-       (cons 'may (prin1-to-string copy))))
+       ;; Get rid of text properties because we cannot read them.
+       (cons 'may copy)))
     ((symbolp value)
-     (cons 'must (prin1-to-string value)))
+     (cons 'must value))
     ((vectorp value)
-     (let* ((special nil)
-	    (pass1 (mapcar
-		    (lambda (el)
-		      (let ((res (desktop-internal-v2s el)))
-			(if (null (car res))
-			    (setq special t))
-			res))
-		    value)))
+     (let* ((pass1 (mapcar #'desktop--v2s value))
+	    (special (assq nil pass1)))
        (if special
-	   (cons nil (concat "(vector "
-			     (mapconcat (lambda (el)
-					  (if (eq (car el) 'must)
-					      (concat "'" (cdr el))
-					    (cdr el)))
-					pass1
-					" ")
-			     ")"))
-	 (cons 'may (concat "[" (mapconcat 'cdr pass1 " ") "]")))))
+	   (cons nil `(vector
+                       ,@(mapcar (lambda (el)
+                                   (if (eq (car el) 'must)
+                                       `',(cdr el) (cdr el)))
+                                 pass1)))
+	 (cons 'may `[,@(mapcar #'cdr pass1)]))))
     ((consp value)
      (let ((p value)
 	   newlist
-	   use-list*
-	   anynil)
+	   use-list*)
        (while (consp p)
-	 (let ((q.txt (desktop-internal-v2s (car p))))
-	   (or anynil (setq anynil (null (car q.txt))))
-	   (setq newlist (cons q.txt newlist)))
+	 (let ((q.sexp (desktop--v2s (car p))))
+           (push q.sexp newlist))
 	 (setq p (cdr p)))
-       (if p
-	   (let ((last (desktop-internal-v2s p)))
-	     (or anynil (setq anynil (null (car last))))
-	     (or anynil
-		 (setq newlist (cons '(must . ".") newlist)))
-	     (setq use-list* t)
-	     (setq newlist (cons last newlist))))
-       (setq newlist (nreverse newlist))
-       (if anynil
+       (when p
+         (let ((last (desktop--v2s p)))
+           (setq use-list* t)
+           (push last newlist)))
+       (if (assq nil newlist)
 	   (cons nil
-		 (concat (if use-list* "(desktop-list* "  "(list ")
-			 (mapconcat (lambda (el)
-				      (if (eq (car el) 'must)
-					  (concat "'" (cdr el))
-					(cdr el)))
-				    newlist
-				    " ")
-			 ")"))
+		 `(,(if use-list* 'desktop-list* 'list)
+                   ,@(mapcar (lambda (el)
+                               (if (eq (car el) 'must)
+                                   `',(cdr el) (cdr el)))
+                             (nreverse newlist))))
 	 (cons 'must
-	       (concat "(" (mapconcat 'cdr newlist " ") ")")))))
+	       `(,@(mapcar #'cdr
+                           (nreverse (if use-list* (cdr newlist) newlist)))
+                 ,@(if use-list* (cdar newlist)))))))
     ((subrp value)
-     (cons nil (concat "(symbol-function '"
-		       (substring (prin1-to-string value) 7 -1)
-		       ")")))
+     (cons nil `(symbol-function
+                 ',(intern-soft (substring (prin1-to-string value) 7 -1)))))
     ((markerp value)
-     (let ((pos (prin1-to-string (marker-position value)))
-	   (buf (prin1-to-string (buffer-name (marker-buffer value)))))
-       (cons nil (concat "(let ((mk (make-marker)))"
-			 " (add-hook 'desktop-delay-hook"
-			 " (list 'lambda '() (list 'set-marker mk "
-			 pos " (get-buffer " buf ")))) mk)"))))
-    (t					 ; save as text
-     (cons 'may "\"Unprintable entity\""))))
+     (let ((pos (marker-position value))
+	   (buf (buffer-name (marker-buffer value))))
+       (cons nil
+             `(let ((mk (make-marker)))
+                (add-hook 'desktop-delay-hook
+                          `(lambda ()
+                             (set-marker ,mk ,,pos (get-buffer ,,buf))))
+                mk))))
+    (t                                  ; Save as text.
+     (cons 'may "Unprintable entity"))))
 
 ;; ----------------------------------------------------------------------------
 (defun desktop-value-to-string (value)
@@ -781,9 +808,11 @@ QUOTE may be `may' (value may be quoted),
 Not all types of values are supported."
   (let* ((print-escape-newlines t)
 	 (float-output-format nil)
-	 (quote.txt (desktop-internal-v2s value))
-	 (quote (car quote.txt))
-	 (txt (cdr quote.txt)))
+	 (quote.sexp (desktop--v2s value))
+	 (quote (car quote.sexp))
+	 (txt
+          (let ((print-quoted t))
+            (prin1-to-string (cdr quote.sexp)))))
     (if (eq quote 'must)
 	(concat "'" txt)
       txt)))
@@ -820,17 +849,17 @@ MODE is the major mode.
         dired-skip)
     (and (not (and (stringp desktop-buffers-not-to-save)
 		   (not filename)
-		   (string-match desktop-buffers-not-to-save bufname)))
+		   (string-match-p desktop-buffers-not-to-save bufname)))
          (not (memq mode desktop-modes-not-to-save))
          ;; FIXME this is broken if desktop-files-not-to-save is nil.
          (or (and filename
 		  (stringp desktop-files-not-to-save)
-                  (not (string-match desktop-files-not-to-save filename)))
+                  (not (string-match-p desktop-files-not-to-save filename)))
              (and (memq mode '(dired-mode vc-dir-mode))
                   (with-current-buffer bufname
                     (not (setq dired-skip
-                               (string-match desktop-files-not-to-save
-                                             default-directory)))))
+                               (string-match-p desktop-files-not-to-save
+                                               default-directory)))))
              (and (null filename)
                   (null dired-skip)     ; bug#5755
 		  (with-current-buffer bufname desktop-save-buffer))))))
@@ -853,12 +882,216 @@ DIRNAME must be the directory in which the desktop file will be saved."
 
 
 ;; ----------------------------------------------------------------------------
+(defvar desktop-filter-parameters-alist
+  '((background-color	. desktop--filter-*-color)
+    (buffer-list	. t)
+    (buffer-predicate	. t)
+    (buried-buffer-list . t)
+    (desktop-font	. desktop--filter-restore-desktop-parm)
+    (desktop-fullscreen . desktop--filter-restore-desktop-parm)
+    (desktop-height	. desktop--filter-restore-desktop-parm)
+    (desktop-width	. desktop--filter-restore-desktop-parm)
+    (font		. desktop--filter-save-desktop-parm)
+    (font-backend	. t)
+    (foreground-color	. desktop--filter-*-color)
+    (fullscreen		. desktop--filter-save-desktop-parm)
+    (height		. desktop--filter-save-desktop-parm)
+    (minibuffer		. desktop--filter-minibuffer)
+    (name		. t)
+    (outer-window-id	. t)
+    (parent-id		. t)
+    (tty		. desktop--filter-tty*)
+    (tty-type		. desktop--filter-tty*)
+    (width		. desktop--filter-save-desktop-parm)
+    (window-id		. t)
+    (window-system	. t))
+  "Alist of frame parameters and filtering functions.
+
+Each element is a cons (PARAM . FILTER), where PARAM is a parameter
+name (a symbol identifying a frame parameter), and FILTER can be t
+\(meaning the parameter is removed from the parameter list on saving
+and restoring), or a function that will be called with three args:
+
+ CURRENT     a cons (PARAM . VALUE), where PARAM is the one being
+             filtered and VALUE is its current value
+ PARAMETERS  the complete alist of parameters being filtered
+ SAVING      non-nil if filtering before saving state, nil otherwise
+
+The FILTER function must return:
+ nil                  CURRENT is removed from the list
+ t                    CURRENT is left as is
+ (PARAM' . VALUE')    replace CURRENT with this
+
+Frame parameters not on this list are passed intact.")
+
+(defvar desktop--target-display nil
+  "Either (minibuffer . VALUE) or nil.
+This refers to the current frame config being processed inside
+`frame--restore-frames' and its auxiliary functions (like filtering).
+If nil, there is no need to change the display.
+If non-nil, display parameter to use when creating the frame.
+Internal use only.")
+
+(defun desktop-switch-to-gui-p (parameters)
+  "True when switching to a graphic display.
+Return t if PARAMETERS describes a text-only terminal and
+the target is a graphic display; otherwise return nil.
+Only meaningful when called from a filtering function in
+`desktop-filter-parameters-alist'."
+  (and desktop--target-display		       ; we're switching
+       (null (cdr (assq 'display parameters))) ; from a tty
+       (cdr desktop--target-display)))	       ; to a GUI display
+
+(defun desktop-switch-to-tty-p (parameters)
+  "True when switching to a text-only terminal.
+Return t if PARAMETERS describes a graphic display and
+the target is a text-only terminal; otherwise return nil.
+Only meaningful when called from a filtering function in
+`desktop-filter-parameters-alist'."
+  (and desktop--target-display		       ; we're switching
+       (cdr (assq 'display parameters))	       ; from a GUI display
+       (null (cdr desktop--target-display))))  ; to a tty
+
+(defun desktop--filter-tty* (_current parameters saving)
+  ;; Remove tty and tty-type parameters when switching
+  ;; to a GUI frame.
+  (or saving
+      (not (desktop-switch-to-gui-p parameters))))
+
+(defun desktop--filter-*-color (current parameters saving)
+  ;; Remove (foreground|background)-color parameters
+  ;; when switching to a GUI frame if they denote an
+  ;; "unspecified" color.
+  (or saving
+      (not (desktop-switch-to-gui-p parameters))
+      (not (stringp (cdr current)))
+      (not (string-match-p "^unspecified-[fb]g$" (cdr current)))))
+
+(defun desktop--filter-minibuffer (current _parameters saving)
+  ;; When minibuffer is a window, save it as minibuffer . t
+  (or (not saving)
+      (if (windowp (cdr current))
+	  '(minibuffer . t)
+	t)))
+
+(defun desktop--filter-restore-desktop-parm (current parameters saving)
+  ;; When switching to a GUI frame, convert desktop-XXX parameter to XXX
+  (or saving
+      (not (desktop-switch-to-gui-p parameters))
+      (let ((val (cdr current)))
+	(if (eq val :desktop-processed)
+	    nil
+	  (cons (intern (substring (symbol-name (car current))
+				   8)) ;; (length "desktop-")
+		val)))))
+
+(defun desktop--filter-save-desktop-parm (current parameters saving)
+  ;; When switching to a tty frame, save parameter XXX as desktop-XXX so it
+  ;; can be restored in a subsequent GUI session, unless it already exists.
+  (cond (saving t)
+	((desktop-switch-to-tty-p parameters)
+	 (let ((sym (intern (format "desktop-%s" (car current)))))
+	   (if (assq sym parameters)
+	       nil
+	     (cons sym (cdr current)))))
+	((desktop-switch-to-gui-p parameters)
+	 (let* ((dtp (assq (intern (format "desktop-%s" (car current)))
+			   parameters))
+		(val (cdr dtp)))
+	   (if (eq val :desktop-processed)
+	       nil
+	     (setcdr dtp :desktop-processed)
+	     (cons (car current) val))))
+	(t t)))
+
+(defun desktop-restore-in-original-display-p ()
+  "True if saved frames' displays should be honored."
+  (cond ((daemonp) t)
+	((eq system-type 'windows-nt) nil)
+	(t (null desktop-restore-in-current-display))))
+
+(defun desktop--filter-frame-parms (parameters saving)
+  "Filter frame parameters and return filtered list.
+PARAMETERS is a parameter alist as returned by `frame-parameters'.
+If SAVING is non-nil, filtering is happening before saving frame state;
+otherwise, filtering is being done before restoring frame state.
+Parameters are filtered according to the setting of
+`desktop-filter-parameters-alist' (which see).
+Internal use only."
+  (let ((filtered nil))
+    (dolist (param parameters)
+      (let ((filter (cdr (assq (car param) desktop-filter-parameters-alist)))
+	    this)
+	(cond (;; no filter: pass param
+	       (null filter)
+	       (push param filtered))
+	      (;; filter = t; skip param
+	       (eq filter t))
+	      (;; filter func returns nil: skip param
+	       (null (setq this (funcall filter param parameters saving))))
+	      (;; filter func returns t: pass param
+	       (eq this t)
+	       (push param filtered))
+	      (;; filter func returns a new param: use it
+	       t
+	       (push this filtered)))))
+    ;; Set the display parameter after filtering, so that filter functions
+    ;; have access to its original value.
+    (when desktop--target-display
+      (let ((display (assq 'display filtered)))
+	(if display
+	    (setcdr display (cdr desktop--target-display))
+	  (push desktop--target-display filtered))))
+    filtered))
+
+(defun desktop--save-minibuffer-frames ()
+  ;; Adds a desktop-mini parameter to frames
+  ;; desktop-mini is a list (MINIBUFFER NUMBER DEFAULT?) where
+  ;; MINIBUFFER	 t if the frame (including minibuffer-only) owns a minibuffer
+  ;; NUMBER	 if MINIBUFFER = t, an ID for the frame; if nil, the ID of
+  ;;		 the frame containing the minibuffer used by this frame
+  ;; DEFAULT?	 if t, this frame is the value of default-minibuffer-frame
+  ;;		 FIXME: What happens with multi-terminal sessions?
+  (let ((frames (frame-list))
+	(count 0))
+    ;; Reset desktop-mini for all frames
+    (dolist (frame frames)
+      (set-frame-parameter frame 'desktop-mini nil))
+    ;; Number all frames with its own minibuffer
+    (dolist (frame (minibuffer-frame-list))
+      (set-frame-parameter frame 'desktop-mini
+			   (list t
+				 (setq count (1+ count))
+				 (eq frame default-minibuffer-frame))))
+    ;; Now link minibufferless frames with their minibuffer frames
+    (dolist (frame frames)
+      (unless (frame-parameter frame 'desktop-mini)
+	(let* ((mb-frame (window-frame (minibuffer-window frame)))
+	       (this (cadr (frame-parameter mb-frame 'desktop-mini))))
+	  (set-frame-parameter frame 'desktop-mini (list nil this nil)))))))
+
+(defun desktop--save-frames ()
+  "Save window/frame state, as a global variable.
+Intended to be called from `desktop-save'.
+Internal use only."
+  (setq desktop--saved-states
+	(and desktop-restore-frames
+	     (progn
+	       (desktop--save-minibuffer-frames)
+	       (mapcar (lambda (frame)
+			 (cons (desktop--filter-frame-parms (frame-parameters frame) t)
+			       (window-state-get (frame-root-window frame) t)))
+		       (frame-list)))))
+  (unless (memq 'desktop--saved-states desktop-globals-to-save)
+    (desktop-outvar 'desktop--saved-states)))
+
 ;;;###autoload
-(defun desktop-save (dirname &optional release)
+(defun desktop-save (dirname &optional release auto-save)
   "Save the desktop in a desktop file.
 Parameter DIRNAME specifies where to save the desktop file.
 Optional parameter RELEASE says whether we're done with this desktop.
-See also `desktop-base-file-name'."
+If AUTO-SAVE is non-nil, compare the saved contents to the one last saved,
+and don't save the buffer if they are the same."
   (interactive "DDirectory to save desktop file in: ")
   (setq desktop-dirname (file-name-as-directory (expand-file-name dirname)))
   (save-excursion
@@ -890,6 +1123,9 @@ See also `desktop-base-file-name'."
 	  (save-excursion (run-hooks 'desktop-save-hook))
 	  (goto-char (point-max))
 	  (insert "\n;; Global section:\n")
+	  ;; Called here because we save the window/frame state as a global
+	  ;; variable for compatibility with previous Emacsen.
+	  (desktop--save-frames)
 	  (mapc (function desktop-outvar) desktop-globals-to-save)
 	  (when (memq 'kill-ring desktop-globals-to-save)
 	    (insert
@@ -918,10 +1154,17 @@ See also `desktop-base-file-name'."
 		(insert ")\n\n"))))
 
 	  (setq default-directory desktop-dirname)
-	  (let ((coding-system-for-write 'emacs-mule))
-	    (write-region (point-min) (point-max) (desktop-full-file-name) nil 'nomessage))
-	  ;; We remember when it was modified (which is presumably just now).
-	  (setq desktop-file-modtime (nth 5 (file-attributes (desktop-full-file-name)))))))))
+	  ;; If auto-saving, avoid writing if nothing has changed since the last write.
+	  ;; Don't check 300 characters of the header that contains the timestamp.
+	  (let ((checksum (and auto-save (md5 (current-buffer)
+					      (+ (point-min) 300) (point-max)
+					      'emacs-mule))))
+	    (unless (and auto-save (equal checksum desktop-file-checksum))
+	      (let ((coding-system-for-write 'emacs-mule))
+		(write-region (point-min) (point-max) (desktop-full-file-name) nil 'nomessage))
+	      (setq desktop-file-checksum checksum)
+	      ;; We remember when it was modified (which is presumably just now).
+	      (setq desktop-file-modtime (nth 5 (file-attributes (desktop-full-file-name)))))))))))
 
 ;; ----------------------------------------------------------------------------
 ;;;###autoload
@@ -941,6 +1184,221 @@ This function also sets `desktop-dirname' to nil."
 (defvar desktop-lazy-timer nil)
 
 ;; ----------------------------------------------------------------------------
+(defvar desktop--reuse-list nil
+  "Internal use only.")
+
+(defun desktop--find-frame (predicate display &rest args)
+  "Find a suitable frame in `desktop--reuse-list'.
+Look through frames whose display property matches DISPLAY and
+return the first one for which (PREDICATE frame ARGS) returns t.
+If PREDICATE is nil, it is always satisfied.  Internal use only.
+This is an auxiliary function for `desktop--select-frame'."
+  (catch :found
+    (dolist (frame desktop--reuse-list)
+      (when (and (equal (frame-parameter frame 'display) display)
+		 (or (null predicate)
+		     (apply predicate frame args)))
+	(throw :found frame)))
+    nil))
+
+(defun desktop--select-frame (display frame-cfg)
+  "Look for an existing frame to reuse.
+DISPLAY is the display where the frame will be shown, and FRAME-CFG
+is the parameter list of the frame being restored.  Internal use only."
+  (if (eq desktop-restoring-reuses-frames t)
+      (let ((frame nil)
+	    mini)
+	;; There are no fancy heuristics there.	 We could implement some
+	;; based on frame size and/or position, etc., but it is not clear
+	;; that any "gain" (in the sense of reduced flickering, etc.) is
+	;; worth the added complexity.	In fact, the code below mainly
+	;; tries to work nicely when M-x desktop-read is used after a desktop
+	;; session has already been loaded.  The other main use case, which
+	;; is the initial desktop-read upon starting Emacs, should usually
+	;; only have one, or very few, frame(s) to reuse.
+	(cond (;; When the target is tty, every existing frame is reusable.
+	       (null display)
+	       (setq frame (desktop--find-frame nil display)))
+	      (;; If the frame has its own minibuffer, let's see whether
+	       ;; that frame has already been loaded (which can happen after
+	       ;; M-x desktop-read).
+	       (car (setq mini (cdr (assq 'desktop-mini frame-cfg))))
+	       (setq frame (or (desktop--find-frame
+				(lambda (f m)
+				  (equal (frame-parameter f 'desktop-mini) m))
+				display mini))))
+	      (;; For minibufferless frames, check whether they already exist,
+	       ;; and that they are linked to the right minibuffer frame.
+	       mini
+	       (setq frame (desktop--find-frame
+			    (lambda (f n)
+			      (let ((m (frame-parameter f 'desktop-mini)))
+				(and m
+				     (null (car m))
+				     (= (cadr m) n)
+				     (equal (cadr (frame-parameter
+						   (window-frame (minibuffer-window f))
+						   'desktop-mini))
+					    n))))
+			    display (cadr mini))))
+	      (;; Default to just finding a frame in the same display.
+	       t
+	       (setq frame (desktop--find-frame nil display))))
+	;; If found, remove from the list.
+	(when frame
+	  (setq desktop--reuse-list (delq frame desktop--reuse-list)))
+	frame)
+    nil))
+
+(defun desktop--make-frame (frame-cfg window-cfg)
+  "Set up a frame according to its saved state.
+That means either creating a new frame or reusing an existing one.
+FRAME-CFG is the parameter list of the new frame; WINDOW-CFG is
+its window state.  Internal use only."
+  (let* ((fullscreen (cdr (assq 'fullscreen frame-cfg)))
+	 (lines (assq 'tool-bar-lines frame-cfg))
+	 (filtered-cfg (desktop--filter-frame-parms frame-cfg nil))
+	 (display (cdr (assq 'display filtered-cfg))) ;; post-filtering
+	 alt-cfg frame)
+
+    ;; This works around bug#14795 (or feature#14795, if not a bug :-)
+    (setq filtered-cfg (assq-delete-all 'tool-bar-lines filtered-cfg))
+    (push '(tool-bar-lines . 0) filtered-cfg)
+
+    (when fullscreen
+      ;; Currently Emacs has the limitation that it does not record the size
+      ;; and position of a frame before maximizing it, so we cannot save &
+      ;; restore that info.  Instead, when restoring, we resort to creating
+      ;; invisible "fullscreen" frames of default size and then maximizing them
+      ;; (and making them visible) which at least is somewhat user-friendly
+      ;; when these frames are later de-maximized.
+      (let ((width (and (eq fullscreen 'fullheight) (cdr (assq 'width filtered-cfg))))
+	    (height (and (eq fullscreen 'fullwidth) (cdr (assq 'height filtered-cfg))))
+	    (visible (assq 'visibility filtered-cfg)))
+	(dolist (parameter '(visibility fullscreen width height))
+	  (setq filtered-cfg (assq-delete-all parameter filtered-cfg)))
+	(when width
+	  (setq filtered-cfg (append `((user-size . t) (width . ,width))
+				       filtered-cfg)))
+	(when height
+	  (setq filtered-cfg (append `((user-size . t) (height . ,height))
+				     filtered-cfg)))
+	;; These are parameters to apply after creating/setting the frame.
+	(push visible alt-cfg)
+	(push (cons 'fullscreen fullscreen) alt-cfg)))
+
+    ;; Time to select or create a frame an apply the big bunch of parameters
+    (if (setq frame (desktop--select-frame display filtered-cfg))
+	(modify-frame-parameters frame filtered-cfg)
+      (setq frame (make-frame-on-display display filtered-cfg)))
+
+    ;; Let's give the finishing touches (visibility, tool-bar, maximization).
+    (when lines (push lines alt-cfg))
+    (when alt-cfg (modify-frame-parameters frame alt-cfg))
+    ;; Now restore window state.
+    (window-state-put window-cfg (frame-root-window frame) 'safe)
+    frame))
+
+(defun desktop--sort-states (state1 state2)
+  ;; Order: default minibuffer frame
+  ;;	    other frames with minibuffer, ascending ID
+  ;;	    minibufferless frames, ascending ID
+  (let ((dm1 (cdr (assq 'desktop-mini (car state1))))
+	(dm2 (cdr (assq 'desktop-mini (car state2)))))
+    (cond ((nth 2 dm1) t)
+	  ((nth 2 dm2) nil)
+	  ((null (car dm2)) t)
+	  ((null (car dm1)) nil)
+	  (t (< (cadr dm1) (cadr dm2))))))
+
+(defun desktop--restore-frames ()
+  "Restore window/frame configuration.
+Internal use only."
+  (when (and desktop-restore-frames desktop--saved-states)
+    (let* ((frame-mb-map nil) ;; Alist of frames with their own minibuffer
+	   (visible nil)
+	   (delete-saved (eq desktop-restore-in-current-display 'delete))
+	   (forcing (not (desktop-restore-in-original-display-p)))
+	   (target (and forcing (cons 'display (frame-parameter nil 'display)))))
+
+      ;; Sorting saved states allows us to easily restore minibuffer-owning frames
+      ;; before minibufferless ones.
+      (setq desktop--saved-states (sort desktop--saved-states #'desktop--sort-states))
+      ;; Potentially all existing frames are reusable.	Later we will decide which ones
+      ;; to reuse, and how to deal with any leftover.
+      (setq desktop--reuse-list (frame-list))
+
+      (dolist (state desktop--saved-states)
+	(condition-case err
+	    (let* ((frame-cfg (car state))
+		   (window-cfg (cdr state))
+		   (d-mini (cdr (assq 'desktop-mini frame-cfg)))
+		   num frame to-tty)
+	      ;; Only set target if forcing displays and the target display is different.
+	      (if (or (not forcing)
+		      (equal target (or (assq 'display frame-cfg) '(display . nil))))
+		  (setq desktop--target-display nil)
+		(setq desktop--target-display target
+		      to-tty (null (cdr target))))
+	      ;; Time to restore frames and set up their minibuffers as they were.
+	      ;; We only skip a frame (thus deleting it) if either:
+	      ;; - we're switching displays, and the user chose the option to delete, or
+	      ;; - we're switching to tty, and the frame to restore is minibuffer-only.
+	      (unless (and desktop--target-display
+			   (or delete-saved
+			       (and to-tty
+				    (eq (cdr (assq 'minibuffer frame-cfg)) 'only))))
+
+		;; Restore minibuffers.	 Some of this stuff could be done in a filter
+		;; function, but it would be messy because restoring minibuffers affects
+		;; global state; it's best to do it here than add a bunch of global
+		;; variables to pass info back-and-forth to/from the filter function.
+		(cond
+		 ((null d-mini)) ;; No desktop-mini.  Process as normal frame.
+		 (to-tty) ;; Ignore minibuffer stuff and process as normal frame.
+		 ((car d-mini) ;; Frame has its own minibuffer (or it is minibuffer-only).
+		  (setq num (cadr d-mini))
+		  (when (eq (cdr (assq 'minibuffer frame-cfg)) 'only)
+		    (setq frame-cfg (append '((tool-bar-lines . 0) (menu-bar-lines . 0))
+					    frame-cfg))))
+		 (t ;; Frame depends on other frame's minibufer window.
+		  (let ((mb-frame (cdr (assq (cadr d-mini) frame-mb-map))))
+		    (unless (frame-live-p mb-frame)
+		      (error "Minibuffer frame %s not found" (cadr d-mini)))
+		    (let ((mb-param (assq 'minibuffer frame-cfg))
+			  (mb-window (minibuffer-window mb-frame)))
+		      (unless (and (window-live-p mb-window)
+				   (window-minibuffer-p mb-window))
+			(error "Not a minibuffer window %s" mb-window))
+		      (if mb-param
+			  (setcdr mb-param mb-window)
+			(push (cons 'minibuffer mb-window) frame-cfg))))))
+		;; OK, we're ready at last to create (or reuse) a frame and
+		;; restore the window config.
+		(setq frame (desktop--make-frame frame-cfg window-cfg))
+		;; Set default-minibuffer if required.
+		(when (nth 2 d-mini) (setq default-minibuffer-frame frame))
+		;; Store frame/NUM to assign to minibufferless frames.
+		(when num (push (cons num frame) frame-mb-map))
+		;; Try to locate at least one visible frame.
+		(when (and (not visible) (frame-visible-p frame))
+		  (setq visible frame))))
+	  (error
+	   (delay-warning 'desktop (error-message-string err) :error))))
+
+      ;; Delete remaining frames, but do not fail if some resist being deleted.
+      (unless (eq desktop-restoring-reuses-frames 'keep)
+	(dolist (frame desktop--reuse-list)
+	  (ignore-errors (delete-frame frame))))
+      (setq desktop--reuse-list nil)
+      ;; Make sure there's at least one visible frame, and select it.
+      (unless (or visible (daemonp))
+	(setq visible (if (frame-live-p default-minibuffer-frame)
+			  default-minibuffer-frame
+			(car (frame-list))))
+	(make-frame-visible visible)
+	(select-frame-set-input-focus visible)))))
+
 ;;;###autoload
 (defun desktop-read (&optional dirname)
   "Read and process the desktop file in directory DIRNAME.
@@ -1009,6 +1467,7 @@ Using it may cause conflicts.  Use it anyway? " owner)))))
 	    (switch-to-buffer (car (buffer-list)))
 	    (run-hooks 'desktop-delay-hook)
 	    (setq desktop-delay-hook nil)
+	    (desktop--restore-frames)
 	    (run-hooks 'desktop-after-read-hook)
 	    (message "Desktop: %d buffer%s restored%s%s."
 		     desktop-buffer-ok-count
@@ -1073,6 +1532,37 @@ directory DIRNAME."
       (desktop-save desktop-dirname)
     (call-interactively 'desktop-save))
   (message "Desktop saved in %s" (abbreviate-file-name desktop-dirname)))
+
+;; ----------------------------------------------------------------------------
+;; Auto-Saving.
+(defvar desktop-auto-save-timer nil)
+
+(defun desktop-auto-save ()
+  "Save the desktop periodically.
+Called by the timer created in `desktop-auto-save-set-timer'."
+  (when (and desktop-save-mode
+	     (integerp desktop-auto-save-timeout)
+	     (> desktop-auto-save-timeout 0)
+	     ;; Avoid desktop saving during lazy loading.
+	     (not desktop-lazy-timer)
+	     ;; Save only to own desktop file.
+	     (eq (emacs-pid) (desktop-owner))
+	     desktop-dirname)
+    (desktop-save desktop-dirname nil t))
+  (desktop-auto-save-set-timer))
+
+(defun desktop-auto-save-set-timer ()
+  "Reset the auto-save timer.
+Cancel any previous timer.  When `desktop-auto-save-timeout' is a positive
+integer, start a new timer to call `desktop-auto-save' in that many seconds."
+  (when desktop-auto-save-timer
+    (cancel-timer desktop-auto-save-timer)
+    (setq desktop-auto-save-timer nil))
+  (when (and (integerp desktop-auto-save-timeout)
+	     (> desktop-auto-save-timeout 0))
+    (setq desktop-auto-save-timer
+	  (run-with-timer desktop-auto-save-timeout nil
+			  'desktop-auto-save))))
 
 ;; ----------------------------------------------------------------------------
 ;;;###autoload
@@ -1327,7 +1817,11 @@ If there are no buffers left to create, kill the timer."
         (setq desktop-save-mode nil)))
     (when desktop-save-mode
       (desktop-read)
+      (desktop-auto-save-set-timer)
       (setq inhibit-startup-screen t))))
+
+;; So we can restore vc-dir buffers.
+(autoload 'vc-dir-mode "vc-dir" nil t)
 
 (provide 'desktop)
 

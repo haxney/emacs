@@ -159,7 +159,7 @@ struct Lisp_Process
     gnutls_anon_client_credentials_t gnutls_anon_cred;
     int gnutls_log_level;
     int gnutls_handshakes_tried;
-    int gnutls_p;
+    unsigned int gnutls_p : 1;
 #endif
 };
 
@@ -185,9 +185,9 @@ pset_gnutls_cred_type (struct Lisp_Process *p, Lisp_Object val)
 }
 #endif
 
-/* Nonzero means don't run process sentinels.  This is used
+/* True means don't run process sentinels.  This is used
    when exiting.  */
-extern int inhibit_sentinels;
+extern bool inhibit_sentinels;
 
 extern Lisp_Object Qeuid, Qegid, Qcomm, Qstate, Qppid, Qpgrp, Qsess, Qttname;
 extern Lisp_Object Qminflt, Qmajflt, Qcminflt, Qcmajflt, Qutime, Qstime;
@@ -198,8 +198,18 @@ extern Lisp_Object QCspeed;
 extern Lisp_Object QCbytesize, QCstopbits, QCparity, Qodd, Qeven;
 extern Lisp_Object QCflowcontrol, Qhw, Qsw, QCsummary;
 
+/* Exit statuses for GNU programs that exec other programs.  */
+enum
+{
+  EXIT_CANCELED = 125, /* Internal error prior to exec attempt.  */
+  EXIT_CANNOT_INVOKE = 126, /* Program located, but not usable.  */
+  EXIT_ENOENT = 127 /* Could not find program to exec.  */
+};
+
 /* Defined in callproc.c.  */
 
+extern void block_child_signal (void);
+extern void unblock_child_signal (void);
 extern void record_kill_process (struct Lisp_Process *);
 
 /* Defined in process.c.  */
@@ -209,7 +219,7 @@ extern Lisp_Object system_process_attributes (Lisp_Object);
 
 extern void hold_keyboard_input (void);
 extern void unhold_keyboard_input (void);
-extern int kbd_on_hold_p (void);
+extern bool kbd_on_hold_p (void);
 
 typedef void (*fd_callback) (int fd, void *data);
 
@@ -217,5 +227,8 @@ extern void add_read_fd (int fd, fd_callback func, void *data);
 extern void delete_read_fd (int fd);
 extern void add_write_fd (int fd, fd_callback func, void *data);
 extern void delete_write_fd (int fd);
+#ifdef NS_IMPL_GNUSTEP
+extern void catch_child_signal (void);
+#endif
 
 INLINE_HEADER_END

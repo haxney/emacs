@@ -55,7 +55,8 @@ into this list; they also should call `dired-log' to log the errors.")
 (defun dired-diff (file &optional switches)
   "Compare file at point with file FILE using `diff'.
 If called interactively, prompt for FILE.  If the file at point
-has a backup file, use that as the default.  If the mark is active
+has a backup file, use that as the default.  If the file at point
+is a backup file, use its original.  If the mark is active
 in Transient Mark mode, use the file at the mark as the default.
 \(That's the mark set by \\[set-mark-command], not by Dired's
 \\[dired-mark] command.)
@@ -67,8 +68,10 @@ With prefix arg, prompt for second argument SWITCHES, which is
 the string of command switches for the third argument of `diff'."
   (interactive
    (let* ((current (dired-get-filename t))
-	  ;; Get the latest existing backup file.
-	  (oldf (diff-latest-backup-file current))
+	  ;; Get the latest existing backup file or its original.
+	  (oldf (if (backup-file-name-p current)
+		    (file-name-sans-versions current)
+		  (diff-latest-backup-file current)))
 	  ;; Get the file at the mark.
 	  (file-at-mark (if (and transient-mark-mode mark-active)
 			    (save-excursion (goto-char (mark t))
@@ -107,7 +110,10 @@ the string of command switches for the third argument of `diff'."
 		   (equal (expand-file-name current file)
 			  (expand-file-name current))))
       (error "Attempt to compare the file to itself"))
-    (diff file current switches)))
+    (if (and (backup-file-name-p current)
+	     (equal file (file-name-sans-versions current)))
+	(diff current file switches)
+      (diff file current switches))))
 
 ;;;###autoload
 (defun dired-backup-diff (&optional switches)
@@ -2485,18 +2491,16 @@ a file name.  Otherwise, it searches the whole buffer without restrictions."
   :group 'dired
   :version "23.1")
 
-(defvar dired-isearch-filter-predicate-orig nil)
-
 (defun dired-isearch-filenames-toggle ()
   "Toggle file names searching on or off.
 When on, Isearch skips matches outside file names using the predicate
 `dired-isearch-filter-filenames' that matches only at file names.
 When off, it uses the original predicate."
   (interactive)
-  (setq isearch-filter-predicate
-	(if (eq isearch-filter-predicate 'dired-isearch-filter-filenames)
-	    dired-isearch-filter-predicate-orig
-	  'dired-isearch-filter-filenames))
+  (setq isearch-filter-predicates
+	(if (memq 'dired-isearch-filter-filenames isearch-filter-predicates)
+	    (delq 'dired-isearch-filter-filenames isearch-filter-predicates)
+	  (cons 'dired-isearch-filter-filenames isearch-filter-predicates)))
   (setq isearch-success t isearch-adjusted t)
   (isearch-update))
 
@@ -2507,29 +2511,27 @@ Intended to be added to `isearch-mode-hook'."
   (when (or (eq dired-isearch-filenames t)
 	    (and (eq dired-isearch-filenames 'dwim)
 		 (get-text-property (point) 'dired-filename)))
-    (setq isearch-message-prefix-add "filename ")
-    (define-key isearch-mode-map "\M-sf" 'dired-isearch-filenames-toggle)
-    (setq dired-isearch-filter-predicate-orig
-	  (default-value 'isearch-filter-predicate))
-    (setq-default isearch-filter-predicate 'dired-isearch-filter-filenames)
+    (define-key isearch-mode-map "\M-sff" 'dired-isearch-filenames-toggle)
+    (add-hook 'isearch-filter-predicates 'dired-isearch-filter-filenames nil t)
     (add-hook 'isearch-mode-end-hook 'dired-isearch-filenames-end nil t)))
 
 (defun dired-isearch-filenames-end ()
   "Clean up the Dired file name search after terminating isearch."
   (setq isearch-message-prefix-add nil)
-  (define-key isearch-mode-map "\M-sf" nil)
-  (setq-default isearch-filter-predicate dired-isearch-filter-predicate-orig)
+  (define-key isearch-mode-map "\M-sff" nil)
+  (remove-hook 'isearch-filter-predicates 'dired-isearch-filter-filenames t)
   (remove-hook 'isearch-mode-end-hook 'dired-isearch-filenames-end t))
 
 (defun dired-isearch-filter-filenames (beg end)
-  "Test whether the current search hit is a visible file name.
+  "Test whether the current search hit is a file name.
 Return non-nil if the text from BEG to END is part of a file
-name (has the text property `dired-filename') and is visible."
-  (and (isearch-filter-visible beg end)
-       (if dired-isearch-filenames
-	   (text-property-not-all (min beg end) (max beg end)
-				  'dired-filename nil)
-	 t)))
+name (has the text property `dired-filename')."
+  (if dired-isearch-filenames
+      (text-property-not-all (min beg end) (max beg end)
+			     'dired-filename nil)
+    t))
+
+(put 'dired-isearch-filter-filenames 'isearch-message-prefix "filename ")
 
 ;;;###autoload
 (defun dired-isearch-filenames ()

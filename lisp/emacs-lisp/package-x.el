@@ -5,7 +5,6 @@
 ;; Author: Tom Tromey <tromey@redhat.com>
 ;;         Daniel Hackney <dan@haxney.org>
 ;; Created: 10 Mar 2007
-;; Version: 0.9
 ;; Keywords: tools
 ;; Package: package
 

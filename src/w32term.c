@@ -109,9 +109,10 @@ struct w32_display_info *x_display_list;
 Lisp_Object w32_display_name_list;
 
 
-#if _WIN32_WINNT < 0x0500
+#if _WIN32_WINNT < 0x0500 && !defined(_W64)
 /* Pre Windows 2000, this was not available, but define it here so
-   that Emacs compiled on such a platform will run on newer versions.  */
+   that Emacs compiled on such a platform will run on newer versions.
+   MinGW64 (_W64) defines these unconditionally, so avoid redefining.  */
 
 typedef struct tagWCRANGE
 {
@@ -142,6 +143,15 @@ BOOL (WINAPI *pfnSetLayeredWindowAttributes) (HWND, COLORREF, BYTE, DWORD);
 #define WS_EX_LAYERED 0x80000
 #endif
 
+/* SM_CXVIRTUALSCREEN and SM_CYVIRTUALSCREEN are not defined on 95 and
+   NT4.  */
+#ifndef SM_CXVIRTUALSCREEN
+#define SM_CXVIRTUALSCREEN 78
+#endif
+#ifndef SM_CYVIRTUALSCREEN
+#define SM_CYVIRTUALSCREEN 79
+#endif
+
 /* This is a frame waiting to be autoraised, within w32_read_socket.  */
 struct frame *pending_autoraise_frame;
 
@@ -150,6 +160,9 @@ HWND w32_system_caret_hwnd;
 int w32_system_caret_height;
 int w32_system_caret_x;
 int w32_system_caret_y;
+struct window *w32_system_caret_window;
+int w32_system_caret_hdr_height;
+int w32_system_caret_mode_height;
 DWORD dwWindowsThreadId = 0;
 HANDLE hWindowsThread = NULL;
 DWORD dwMainThreadId = 0;
@@ -236,6 +249,7 @@ static void my_set_focus (struct frame *, HWND);
 #endif
 static void my_set_foreground_window (HWND);
 static void my_destroy_window (struct frame *, HWND);
+static void w32fullscreen_hook (FRAME_PTR);
 
 #ifdef GLYPH_DEBUG
 static void x_check_font (struct frame *, struct font *);
@@ -514,18 +528,24 @@ x_set_frame_alpha (struct frame *f)
 int
 x_display_pixel_height (struct w32_display_info *dpyinfo)
 {
-  HDC dc = GetDC (NULL);
-  int pixels = GetDeviceCaps (dc, VERTRES);
-  ReleaseDC (NULL, dc);
+  int pixels = GetSystemMetrics (SM_CYVIRTUALSCREEN);
+
+  if (pixels == 0)
+    /* Fallback for Windows 95 or NT 4.0.  */
+    pixels = GetSystemMetrics (SM_CYSCREEN);
+
   return pixels;
 }
 
 int
 x_display_pixel_width (struct w32_display_info *dpyinfo)
 {
-  HDC dc = GetDC (NULL);
-  int pixels = GetDeviceCaps (dc, HORZRES);
-  ReleaseDC (NULL, dc);
+  int pixels = GetSystemMetrics (SM_CXVIRTUALSCREEN);
+
+  if (pixels == 0)
+    /* Fallback for Windows 95 or NT 4.0.  */
+    pixels = GetSystemMetrics (SM_CXSCREEN);
+
   return pixels;
 }
 
@@ -2892,9 +2912,15 @@ x_focus_changed (int type, int state, struct w32_display_info *dpyinfo,
               && CONSP (Vframe_list)
               && !NILP (XCDR (Vframe_list)))
             {
-              bufp->kind = FOCUS_IN_EVENT;
-              XSETFRAME (bufp->frame_or_window, frame);
+              bufp->arg = Qt;
             }
+          else
+            {
+              bufp->arg = Qnil;
+            }
+
+          bufp->kind = FOCUS_IN_EVENT;
+          XSETFRAME (bufp->frame_or_window, frame);
         }
 
       frame->output_data.x->focus_state |= state;
@@ -2909,7 +2935,10 @@ x_focus_changed (int type, int state, struct w32_display_info *dpyinfo,
         {
           dpyinfo->w32_focus_event_frame = 0;
           x_new_focus_frame (dpyinfo, 0);
-        }
+
+          bufp->kind = FOCUS_OUT_EVENT;
+          XSETFRAME (bufp->frame_or_window, frame);
+      }
 
       /* TODO: IME focus?  */
     }
@@ -3161,7 +3190,7 @@ construct_drag_n_drop (struct input_event *result, W32Msg *msg, struct frame *f)
   HDROP hdrop;
   POINT p;
   WORD num_files;
-  char *name;
+  guichar_t *name;
   int i, len;
 
   result->kind = DRAG_N_DROP_EVENT;
@@ -3186,12 +3215,17 @@ construct_drag_n_drop (struct input_event *result, W32Msg *msg, struct frame *f)
 
   for (i = 0; i < num_files; i++)
     {
-      len = DragQueryFile (hdrop, i, NULL, 0);
+      len = GUI_FN (DragQueryFile) (hdrop, i, NULL, 0);
       if (len <= 0)
 	continue;
-      name = alloca (len + 1);
-      DragQueryFile (hdrop, i, name, len + 1);
+
+      name = alloca ((len + 1) * sizeof (*name));
+      GUI_FN (DragQueryFile) (hdrop, i, name, len + 1);
+#ifdef NTGUI_UNICODE
+      files = Fcons (from_unicode_buffer (name), files);
+#else
       files = Fcons (DECODE_FILE (build_string (name)), files);
+#endif /* NTGUI_UNICODE */
     }
 
   DragFinish (hdrop);
@@ -3203,6 +3237,8 @@ construct_drag_n_drop (struct input_event *result, W32Msg *msg, struct frame *f)
 }
 
 
+#if HAVE_W32NOTIFY
+
 /* File event notifications (see w32notify.c).  */
 
 Lisp_Object
@@ -3318,7 +3354,8 @@ queue_notifications (struct input_event *event, W32Msg *msg, struct frame *f,
   /* We've stuffed all the events ourselves, so w32_read_socket shouldn't.  */
   event->kind = NO_EVENT;
 }
-#endif
+#endif	/* WINDOWSNT */
+#endif	/* HAVE_W32NOTIFY */
 
 
 /* Function to report a mouse movement to the mainstream Emacs code.
@@ -4699,20 +4736,23 @@ w32_read_socket (struct terminal *terminal,
 	  }
 
 	case WM_WINDOWPOSCHANGED:
-	  f = x_window_to_frame (dpyinfo, msg.msg.hwnd);
-	  if (f)
-	    {
-	      if (f->want_fullscreen & FULLSCREEN_WAIT)
-		f->want_fullscreen &= ~(FULLSCREEN_WAIT|FULLSCREEN_BOTH);
-	    }
-	  check_visibility = 1;
-	  break;
-
 	case WM_ACTIVATE:
 	case WM_ACTIVATEAPP:
 	  f = x_window_to_frame (dpyinfo, msg.msg.hwnd);
 	  if (f)
-	    x_check_fullscreen (f);
+	    {
+	      /* Run the full-screen hook function also when we are
+		 being activated, to actually install the required
+		 size in effect, if the WAIT flag is set.  This is
+		 because when the hook is run from x_set_fullscreen,
+		 the frame might not yet be visible, if that call is a
+		 result of make-frame, and in that case the hook just
+		 sets the WAIT flag.  */
+	      if ((msg.msg.message == WM_WINDOWPOSCHANGED || msg.msg.wParam)
+		  && (f->want_fullscreen & FULLSCREEN_WAIT))
+		w32fullscreen_hook (f);
+	      x_check_fullscreen (f);
+	    }
 	  check_visibility = 1;
 	  break;
 
@@ -4958,7 +4998,7 @@ w32_read_socket (struct terminal *terminal,
 	  check_visibility = 1;
 	  break;
 
-#ifdef WINDOWSNT
+#if HAVE_W32NOTIFY
 	case WM_EMACS_FILENOTIFY:
 	  f = x_window_to_frame (dpyinfo, msg.msg.hwnd);
 	  if (f)
@@ -5143,7 +5183,10 @@ x_draw_hollow_cursor (struct window *w, struct glyph_row *row)
      the current matrix is invalid or such, give up.  */
   cursor_glyph = get_phys_cursor_glyph (w);
   if (cursor_glyph == NULL)
-    return;
+    {
+      DeleteObject (hb);
+      return;
+    }
 
   /* Compute frame-relative coordinates for phys cursor.  */
   get_phys_cursor_geometry (w, row, cursor_glyph, &left, &top, &h);
@@ -5315,6 +5358,9 @@ w32_draw_window_cursor (struct window *w, struct glyph_row *glyph_row,
 	  w32_system_caret_y
 	    = (WINDOW_TO_FRAME_PIXEL_Y (w, w->phys_cursor.y)
 	       + glyph_row->ascent - w->phys_cursor_ascent);
+	  w32_system_caret_window = w;
+	  w32_system_caret_hdr_height = WINDOW_HEADER_LINE_HEIGHT (w);
+	  w32_system_caret_mode_height = WINDOW_MODE_LINE_HEIGHT (w);
 
 	  PostMessage (hwnd, WM_IME_STARTCOMPOSITION, 0, 0);
 
@@ -5651,81 +5697,47 @@ x_check_fullscreen (struct frame *f)
 static void
 w32fullscreen_hook (FRAME_PTR f)
 {
-  static int normal_width, normal_height;
-
   if (FRAME_VISIBLE_P (f))
     {
-      int width, height, top_pos, left_pos, pixel_height, pixel_width;
-      int cur_w = FRAME_COLS (f), cur_h = FRAME_LINES (f);
-      RECT workarea_rect;
+      HWND hwnd = FRAME_W32_WINDOW(f);
+      DWORD dwStyle = GetWindowLong (hwnd, GWL_STYLE);
+      RECT rect;
 
-      block_input ();
-      if (normal_height <= 0)
-	normal_height = cur_h;
-      if (normal_width <= 0)
-	normal_width = cur_w;
-      x_real_positions (f, &f->left_pos, &f->top_pos);
-      x_fullscreen_adjust (f, &width, &height, &top_pos, &left_pos);
+      block_input();
+      f->want_fullscreen &= ~FULLSCREEN_WAIT;
 
-      SystemParametersInfo (SPI_GETWORKAREA, 0, &workarea_rect, 0);
-      pixel_height = workarea_rect.bottom - workarea_rect.top;
-      pixel_width  = workarea_rect.right  - workarea_rect.left;
+      if (FRAME_PREV_FSMODE (f) == FULLSCREEN_NONE)
+        GetWindowPlacement (hwnd, &FRAME_NORMAL_PLACEMENT (f));
 
-      switch (f->want_fullscreen)
-	{
-	case FULLSCREEN_MAXIMIZED:
-	  PostMessage (FRAME_W32_WINDOW (f), WM_SYSCOMMAND, SC_MAXIMIZE, 0);
-	  break;
-	case FULLSCREEN_BOTH:
-	  height =
-	    FRAME_PIXEL_HEIGHT_TO_TEXT_LINES (f, pixel_height)
-	    - XINT (Ftool_bar_lines_needed (selected_frame))
-	    + (NILP (Vmenu_bar_mode) ? 1 : 0);
-	  width  =
-	    FRAME_PIXEL_WIDTH_TO_TEXT_COLS (f, pixel_width)
-	    - FRAME_SCROLL_BAR_COLS (f);
-	  left_pos = workarea_rect.left;
-	  top_pos = workarea_rect.top;
-	  break;
-	case FULLSCREEN_WIDTH:
-	  width  =
-	    FRAME_PIXEL_WIDTH_TO_TEXT_COLS (f, pixel_width)
-	    - FRAME_SCROLL_BAR_COLS (f);
-	  if (normal_height > 0)
-	    height = normal_height;
-	  left_pos = workarea_rect.left;
-	  break;
-	case FULLSCREEN_HEIGHT:
-	  height =
-	    FRAME_PIXEL_HEIGHT_TO_TEXT_LINES (f, pixel_height)
-	    - XINT (Ftool_bar_lines_needed (selected_frame))
-	    + (NILP (Vmenu_bar_mode) ? 1 : 0);
-	  if (normal_width > 0)
-	    width = normal_width;
-	  top_pos = workarea_rect.top;
-	  break;
-	case FULLSCREEN_NONE:
-	  if (normal_height > 0)
-	    height = normal_height;
-	  else
-	    normal_height = height;
-	  if (normal_width > 0)
-	    width = normal_width;
-	  else
-	    normal_width = width;
-	  /* FIXME: Should restore the original position of the frame.  */
-	  top_pos = left_pos = 0;
-	  break;
-	}
+      if (FRAME_PREV_FSMODE (f) == FULLSCREEN_BOTH)
+        {
+          SetWindowLong (hwnd, GWL_STYLE, dwStyle | WS_OVERLAPPEDWINDOW);
+          SetWindowPos (hwnd, NULL, 0, 0, 0, 0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+                        SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+        }
 
-      if (cur_w != width || cur_h != height)
-	{
-	  x_set_offset (f, left_pos, top_pos, 1);
-	  x_set_window_size (f, 1, width, height);
-	  do_pending_window_change (0);
-	}
+      w32_fullscreen_rect (hwnd, f->want_fullscreen,
+                           FRAME_NORMAL_PLACEMENT (f).rcNormalPosition, &rect);
+      FRAME_PREV_FSMODE (f) = f->want_fullscreen;
+      if (f->want_fullscreen == FULLSCREEN_BOTH)
+        {
+          SetWindowLong (hwnd, GWL_STYLE, dwStyle & ~WS_OVERLAPPEDWINDOW);
+          SetWindowPos (hwnd, HWND_TOP, rect.left, rect.top,
+                        rect.right - rect.left, rect.bottom - rect.top,
+                        SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+        }
+      else
+        {
+          SetWindowPos (hwnd, HWND_TOP, rect.left, rect.top,
+                        rect.right - rect.left, rect.bottom - rect.top, 0);
+        }
+
+      f->want_fullscreen = FULLSCREEN_NONE;
       unblock_input ();
     }
+  else
+    f->want_fullscreen |= FULLSCREEN_WAIT;
 }
 
 /* Call this to change the size of frame F's x-window.
@@ -6621,7 +6633,7 @@ w32_initialize (void)
     }
 
 #ifdef CYGWIN
-  if ((w32_message_fd = open ("/dev/windows", O_RDWR | O_CLOEXEC)) == -1)
+  if ((w32_message_fd = emacs_open ("/dev/windows", O_RDWR, 0)) == -1)
     fatal ("opening /dev/windows: %s", strerror (errno));
 #endif /* CYGWIN */
 
@@ -6639,7 +6651,7 @@ w32_initialize (void)
   Fset_input_mode (Qnil, Qnil, make_number (2), Qnil);
 
   {
-    DWORD input_locale_id = (DWORD) GetKeyboardLayout (0);
+    DWORD input_locale_id = ((DWORD_PTR) GetKeyboardLayout (0) & 0xffffffff);
     w32_keyboard_codepage =
       codepage_for_locale ((LCID) (input_locale_id & 0xffff));
   }

@@ -606,7 +606,7 @@ Pretty print all glyphs in it->glyph_row.
 end
 
 define prowlims
-  printf "edges=(%d,%d),r2l=%d,cont=%d,trunc=(%d,%d),at_zv=%d\n", $arg0->minpos.charpos, $arg0->maxpos.charpos, $arg0->reversed_p, $arg0->continued_p, $arg0->truncated_on_left_p, $arg0->truncated_on_right_p, $arg0->ends_at_zv_p
+  printf "edges=(%d,%d),enb=%d,r2l=%d,cont=%d,trunc=(%d,%d),at_zv=%d\n", $arg0->minpos.charpos, $arg0->maxpos.charpos, $arg0->enabled_p, $arg0->reversed_p, $arg0->continued_p, $arg0->truncated_on_left_p, $arg0->truncated_on_right_p, $arg0->ends_at_zv_p
 end
 document prowlims
 Print important attributes of a glyph_row structure.
@@ -1150,17 +1150,18 @@ Print $ assuming it is a list font (font-spec, font-entity, or font-object).
 end
 
 define xbacktrace
-  set $bt = backtrace_list
-  while $bt
-    xgettype ($bt->function)
+  set $bt = backtrace_top ()
+  while backtrace_p ($bt)
+    set $fun = backtrace_function ($bt)
+    xgettype $fun
     if $type == Lisp_Symbol
-      xprintsym ($bt->function)
-      printf " (0x%x)\n", $bt->args
+      xprintsym $fun
+      printf " (0x%x)\n", backtrace_args ($bt)
     else
-      xgetptr $bt->function
+      xgetptr $fun
       printf "0x%x ", $ptr
       if $type == Lisp_Vectorlike
-	xgetptr ($bt->function)
+	xgetptr $fun
         set $size = ((struct Lisp_Vector *) $ptr)->header.size
         if ($size & PSEUDOVECTOR_FLAG)
 	  output (enum pvec_type) (($size & PVEC_TYPE_MASK) >> PSEUDOVECTOR_AREA_BITS)
@@ -1172,7 +1173,7 @@ define xbacktrace
       end
       echo \n
     end
-    set $bt = $bt->next
+    set $bt = backtrace_next ($bt)
   end
 end
 document xbacktrace
@@ -1220,8 +1221,8 @@ end
 
 # Show Lisp backtrace after normal backtrace.
 define hookpost-backtrace
-  set $bt = backtrace_list
-  if $bt
+  set $bt = backtrace_top ()
+  if backtrace_p ($bt)
     echo \n
     echo Lisp Backtrace:\n
     xbacktrace

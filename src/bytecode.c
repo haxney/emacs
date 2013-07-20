@@ -59,7 +59,8 @@ by Hallvard:
    indirect threaded, using GCC's computed goto extension.  This code,
    as currently implemented, is incompatible with BYTE_CODE_SAFE and
    BYTE_CODE_METER.  */
-#if defined (__GNUC__) && !defined (BYTE_CODE_SAFE) && !defined (BYTE_CODE_METER)
+#if (defined __GNUC__ && !defined __STRICT_ANSI__ \
+     && !defined BYTE_CODE_SAFE && !defined BYTE_CODE_METER)
 #define BYTE_CODE_THREADED
 #endif
 
@@ -285,8 +286,10 @@ enum byte_code_op
 
 #ifdef BYTE_CODE_SAFE
     Bscan_buffer = 0153, /* No longer generated as of v18.  */
-    Bset_mark = 0163 /* this loser is no longer generated as of v18 */
+    Bset_mark = 0163, /* this loser is no longer generated as of v18 */
 #endif
+
+    B__dummy__ = 0  /* Pacify C89.  */
 };
 
 /* Whether to maintain a `top' and `bottom' field in the stack frame.  */
@@ -313,9 +316,11 @@ struct byte_stack
   Lisp_Object byte_string;
   const unsigned char *byte_string_start;
 
+#if BYTE_MARK_STACK
   /* The vector of constants used during byte-code execution.  Storing
      this here protects it from GC because mark_byte_stack marks it.  */
   Lisp_Object constants;
+#endif
 
   /* Next entry in byte_stack_list.  */
   struct byte_stack *next;
@@ -379,12 +384,12 @@ unmark_byte_stack (void)
 }
 
 
-/* Fetch the next byte from the bytecode stream */
+/* Fetch the next byte from the bytecode stream.  */
 
 #define FETCH *stack.pc++
 
 /* Fetch two bytes from the bytecode stream and make a 16-bit number
-   out of them */
+   out of them.  */
 
 #define FETCH2 (op = FETCH, op + (FETCH << 8))
 
@@ -404,7 +409,7 @@ unmark_byte_stack (void)
 #define DISCARD(n) (top -= (n))
 
 /* Get the value which is at the top of the execution stack, but don't
-   pop it. */
+   pop it.  */
 
 #define TOP (*top)
 
@@ -535,7 +540,9 @@ exec_byte_code (Lisp_Object bytestr, Lisp_Object vector, Lisp_Object maxdepth,
 
   stack.byte_string = bytestr;
   stack.pc = stack.byte_string_start = SDATA (bytestr);
+#if BYTE_MARK_STACK
   stack.constants = vector;
+#endif
   if (MAX_ALLOCA / word_size <= XFASTINT (maxdepth))
     memory_full (SIZE_MAX);
   top = alloca ((XFASTINT (maxdepth) + 1) * sizeof *top);
@@ -565,9 +572,9 @@ exec_byte_code (Lisp_Object bytestr, Lisp_Object vector, Lisp_Object maxdepth,
 	  if (nargs < mandatory)
 	    /* Too few arguments.  */
 	    Fsignal (Qwrong_number_of_arguments,
-		     Fcons (Fcons (make_number (mandatory),
+		     list2 (Fcons (make_number (mandatory),
 				   rest ? Qand_rest : make_number (nonrest)),
-			    Fcons (make_number (nargs), Qnil)));
+			    make_number (nargs)));
 	  else
 	    {
 	      for (; i < nonrest; i++)
@@ -586,9 +593,8 @@ exec_byte_code (Lisp_Object bytestr, Lisp_Object vector, Lisp_Object maxdepth,
       else
 	/* Too many arguments.  */
 	Fsignal (Qwrong_number_of_arguments,
-		 Fcons (Fcons (make_number (mandatory),
-			       make_number (nonrest)),
-			Fcons (make_number (nargs), Qnil)));
+		 list2 (Fcons (make_number (mandatory), make_number (nonrest)),
+			make_number (nargs)));
     }
   else if (! NILP (args_template))
     /* We should push some arguments on the stack.  */
@@ -656,9 +662,12 @@ exec_byte_code (Lisp_Object bytestr, Lisp_Object vector, Lisp_Object maxdepth,
 	 the table clearer.  */
 #define LABEL(OP) [OP] = &&insn_ ## OP
 
-#if (__GNUC__ == 4 && 6 <= __GNUC_MINOR__) || 4 < __GNUC__
+#if 4 < __GNUC__ + (6 <= __GNUC_MINOR__)
 # pragma GCC diagnostic push
 # pragma GCC diagnostic ignored "-Woverride-init"
+#elif defined __clang__
+# pragma GCC diagnostic push
+# pragma GCC diagnostic ignored "-Winitializer-overrides"
 #endif
 
       /* This is the dispatch table for the threaded interpreter.  */
@@ -672,7 +681,7 @@ exec_byte_code (Lisp_Object bytestr, Lisp_Object vector, Lisp_Object maxdepth,
 #undef DEFINE
 	};
 
-#if (__GNUC__ == 4 && 6 <= __GNUC_MINOR__) || 4 < __GNUC__
+#if 4 < __GNUC__ + (6 <= __GNUC_MINOR__) || defined __clang__
 # pragma GCC diagnostic pop
 #endif
 
@@ -751,7 +760,6 @@ exec_byte_code (Lisp_Object bytestr, Lisp_Object vector, Lisp_Object maxdepth,
 	      {
 		BEFORE_POTENTIAL_GC ();
 		wrong_type_argument (Qlistp, v1);
-		AFTER_POTENTIAL_GC ();
 	      }
 	    NEXT;
 	  }
@@ -786,7 +794,6 @@ exec_byte_code (Lisp_Object bytestr, Lisp_Object vector, Lisp_Object maxdepth,
 	      {
 		BEFORE_POTENTIAL_GC ();
 		wrong_type_argument (Qlistp, v1);
-		AFTER_POTENTIAL_GC ();
 	      }
 	    NEXT;
 	  }
@@ -1056,8 +1063,8 @@ exec_byte_code (Lisp_Object bytestr, Lisp_Object vector, Lisp_Object maxdepth,
 
 	CASE (Bsave_window_excursion): /* Obsolete since 24.1.  */
 	  {
-	    register ptrdiff_t count1 = SPECPDL_INDEX ();
-	    record_unwind_protect (Fset_window_configuration,
+	    ptrdiff_t count1 = SPECPDL_INDEX ();
+	    record_unwind_protect (restore_window_configuration,
 				   Fcurrent_window_configuration (Qnil));
 	    BEFORE_POTENTIAL_GC ();
 	    TOP = Fprogn (TOP);
@@ -1082,7 +1089,7 @@ exec_byte_code (Lisp_Object bytestr, Lisp_Object vector, Lisp_Object maxdepth,
 	  }
 
 	CASE (Bunwind_protect):	/* FIXME: avoid closure for lexbind.  */
-	  record_unwind_protect (Fprogn, POP);
+	  record_unwind_protect (unwind_body, POP);
 	  NEXT;
 
 	CASE (Bcondition_case):	/* FIXME: ill-suited for lexbind.  */
@@ -1164,14 +1171,14 @@ exec_byte_code (Lisp_Object bytestr, Lisp_Object vector, Lisp_Object maxdepth,
 	  }
 
 	CASE (Blist1):
-	  TOP = Fcons (TOP, Qnil);
+	  TOP = list1 (TOP);
 	  NEXT;
 
 	CASE (Blist2):
 	  {
 	    Lisp_Object v1;
 	    v1 = POP;
-	    TOP = Fcons (TOP, Fcons (v1, Qnil));
+	    TOP = list2 (TOP, v1);
 	    NEXT;
 	  }
 
@@ -1631,7 +1638,7 @@ exec_byte_code (Lisp_Object bytestr, Lisp_Object vector, Lisp_Object maxdepth,
 	    c = XFASTINT (TOP);
 	    if (NILP (BVAR (current_buffer, enable_multibyte_characters)))
 	      MAKE_CHAR_MULTIBYTE (c);
-	    XSETFASTINT (TOP, syntax_code_spec[(int) SYNTAX (c)]);
+	    XSETFASTINT (TOP, syntax_code_spec[SYNTAX (c)]);
 	  }
 	  NEXT;
 

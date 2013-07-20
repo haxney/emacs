@@ -184,7 +184,7 @@
 	'file-expand-wildcards 'around 'tramp-advice-file-expand-wildcards)
        (ad-activate 'file-expand-wildcards)))))
 
-;; `with-temp-message' does not exists in XEmacs.
+;; `with-temp-message' does not exist in XEmacs.
 (if (fboundp 'with-temp-message)
     (defalias 'tramp-compat-with-temp-message 'with-temp-message)
   (defmacro tramp-compat-with-temp-message (message &rest body)
@@ -292,7 +292,7 @@ Not actually used.  Use `(format \"%o\" i)' instead?"
       (error "Non-octal junk in string `%s'" x))
     (string-to-number ostr 8)))
 
-;; ID-FORMAT does not exists in XEmacs.
+;; ID-FORMAT does not exist in XEmacs.
 (defun tramp-compat-file-attributes (filename &optional id-format)
   "Like `file-attributes' for Tramp files (compat function)."
   (cond
@@ -384,25 +384,30 @@ Not actually used.  Use `(format \"%o\" i)' instead?"
 		 trash)))
        (delete-file filename)))))
 
-;; RECURSIVE has been introduced with Emacs 23.2.
-(defun tramp-compat-delete-directory (directory &optional recursive)
+;; RECURSIVE has been introduced with Emacs 23.2.  TRASH has been
+;; introduced with Emacs 24.1.
+(defun tramp-compat-delete-directory (directory &optional recursive trash)
   "Like `delete-directory' for Tramp files (compat function)."
-  (if (null recursive)
-      (delete-directory directory)
-    (condition-case nil
-	(tramp-compat-funcall 'delete-directory directory recursive)
-      ;; This Emacs version does not support the RECURSIVE flag.  We
-      ;; use the implementation from Emacs 23.2.
-      (wrong-number-of-arguments
-       (setq directory (directory-file-name (expand-file-name directory)))
-       (if (not (file-symlink-p directory))
-	   (mapc (lambda (file)
-		   (if (eq t (car (file-attributes file)))
-		       (tramp-compat-delete-directory file recursive)
-		     (delete-file file)))
-		 (directory-files
-		  directory 'full "^\\([^.]\\|\\.\\([^.]\\|\\..\\)\\).*")))
-       (delete-directory directory)))))
+  (condition-case nil
+      (cond
+       (trash
+	(tramp-compat-funcall 'delete-directory directory recursive trash))
+       (recursive
+	(tramp-compat-funcall 'delete-directory directory recursive))
+       (t
+	(delete-directory directory)))
+    ;; This Emacs version does not support the RECURSIVE or TRASH flag.  We
+    ;; use the implementation from Emacs 23.2.
+    (wrong-number-of-arguments
+     (setq directory (directory-file-name (expand-file-name directory)))
+     (if (not (file-symlink-p directory))
+	 (mapc (lambda (file)
+		 (if (eq t (car (file-attributes file)))
+		     (tramp-compat-delete-directory file recursive trash)
+		   (tramp-compat-delete-file file trash)))
+	       (directory-files
+		directory 'full "^\\([^.]\\|\\.\\([^.]\\|\\..\\)\\).*")))
+     (delete-directory directory))))
 
 ;; `number-sequence' does not exist in XEmacs.  Implementation is
 ;; taken from Emacs 23.
@@ -432,20 +437,6 @@ In Emacs, (split-string \"/foo/bar\" \"/\") returns (\"foo\" \"bar\").
 This is, the first, empty, element is omitted.  In XEmacs, the first
 element is not omitted."
   (delete "" (split-string string pattern)))
-
-(defun tramp-compat-call-process
-  (program &optional infile destination display &rest args)
-  "Calls `call-process' on the local host.
-This is needed because for some Emacs flavors Tramp has
-defadvised `call-process' to behave like `process-file'.  The
-Lisp error raised when PROGRAM is nil is trapped also, returning 1."
-  (let ((default-directory
-	  (if (file-remote-p default-directory)
-	      (tramp-compat-temporary-file-directory)
-	    default-directory)))
-    (if (executable-find program)
-	(apply 'call-process program infile destination display args)
-      1)))
 
 (defun tramp-compat-process-running-p (process-name)
   "Returns `t' if system process PROCESS-NAME is running for `user-login-name'."
@@ -527,6 +518,11 @@ EOL-TYPE can be one of `dos', `unix', or `mac'."
 			eol-type
 			"`dos', `unix', or `mac'")))))
         (t (error "Can't change EOL conversion -- is MULE missing?"))))
+
+;; `user-error' has been added to Emacs 24.3.
+(defun tramp-compat-user-error (format &rest args)
+  "Signal a pilot error."
+  (apply (if (fboundp 'user-error) 'user-error 'error) format args))
 
 (add-hook 'tramp-unload-hook
 	  (lambda ()

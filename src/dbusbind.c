@@ -142,7 +142,10 @@ static bool xd_in_read_queued_messages = 0;
   } while (0)
 
 #else /* !DBUS_DEBUG */
-#define XD_DEBUG_MESSAGE(...)						\
+# if __STDC_VERSION__ < 199901
+#  define XD_DEBUG_MESSAGE (void) /* Pre-C99 compilers cannot debug.  */
+# else
+#  define XD_DEBUG_MESSAGE(...)						\
   do {									\
     if (!NILP (Vdbus_debug))						\
       {									\
@@ -151,7 +154,8 @@ static bool xd_in_read_queued_messages = 0;
 	message ("%s: %s", __func__, s);				\
       }									\
   } while (0)
-#define XD_DEBUG_VALID_LISP_OBJECT_P(object)
+# endif
+# define XD_DEBUG_VALID_LISP_OBJECT_P(object)
 #endif
 
 /* Check whether TYPE is a basic DBusType.  */
@@ -882,7 +886,7 @@ xd_retrieve_arg (int dtype, DBusMessageIter *iter)
 #endif
       {
 	dbus_uint32_t val;
-	unsigned int pval = val;
+	unsigned int pval;
 	dbus_message_iter_get_basic (iter, &val);
 	pval = val;
 	XD_DEBUG_MESSAGE ("%c %u", dtype, pval);

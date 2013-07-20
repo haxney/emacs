@@ -95,7 +95,7 @@ open_directory (char const *name, int *fdp)
       d = fdopendir (fd);
       opendir_errno = errno;
       if (! d)
-	close (fd);
+	emacs_close (fd);
     }
 #endif
 
@@ -107,22 +107,20 @@ open_directory (char const *name, int *fdp)
 }
 
 #ifdef WINDOWSNT
-Lisp_Object
+void
 directory_files_internal_w32_unwind (Lisp_Object arg)
 {
   Vw32_get_true_file_attributes = arg;
-  return Qnil;
 }
 #endif
 
-static Lisp_Object
-directory_files_internal_unwind (Lisp_Object dh)
+static void
+directory_files_internal_unwind (void *dh)
 {
-  DIR *d = XSAVE_POINTER (dh, 0);
+  DIR *d = dh;
   block_input ();
   closedir (d);
   unblock_input ();
-  return Qnil;
 }
 
 /* Function shared by Fdirectory_files and Fdirectory_files_and_attributes.
@@ -185,13 +183,12 @@ directory_files_internal (Lisp_Object directory, Lisp_Object full,
 
   d = open_directory (SSDATA (dirfilename), &fd);
   if (d == NULL)
-    report_file_error ("Opening directory", Fcons (directory, Qnil));
+    report_file_error ("Opening directory", directory);
 
   /* Unfortunately, we can now invoke expand-file-name and
      file-attributes on filenames, both of which can throw, so we must
      do a proper unwind-protect.  */
-  record_unwind_protect (directory_files_internal_unwind,
-			 make_save_pointer (d));
+  record_unwind_protect_ptr (directory_files_internal_unwind, d);
 
 #ifdef WINDOWSNT
   if (attrs)
@@ -258,7 +255,7 @@ directory_files_internal (Lisp_Object directory, Lisp_Object full,
       QUIT;
 
       if (NILP (match)
-	  || (0 <= re_search (bufp, SSDATA (name), len, 0, len, 0)))
+	  || re_search (bufp, SSDATA (name), len, 0, len, 0) >= 0)
 	wanted = 1;
 
       immediate_quit = 0;
@@ -488,10 +485,9 @@ file_name_completion (Lisp_Object file, Lisp_Object dirname, bool all_flag,
 
   d = open_directory (SSDATA (encoded_dir), &fd);
   if (!d)
-    report_file_error ("Opening directory", Fcons (dirname, Qnil));
+    report_file_error ("Opening directory", dirname);
 
-  record_unwind_protect (directory_files_internal_unwind,
-			 make_save_pointer (d));
+  record_unwind_protect_ptr (directory_files_internal_unwind, d);
 
   /* Loop reading blocks */
   /* (att3b compiler bug requires do a null comparison this way) */
@@ -517,8 +513,9 @@ file_name_completion (Lisp_Object file, Lisp_Object dirname, bool all_flag,
 
       QUIT;
       if (len < SCHARS (encoded_file)
-	  || 0 <= scmp (dp->d_name, SSDATA (encoded_file),
-			SCHARS (encoded_file)))
+	  || (scmp (dp->d_name, SSDATA (encoded_file),
+		    SCHARS (encoded_file))
+	      >= 0))
 	continue;
 
       if (file_name_completion_stat (fd, dp, &st) < 0)
@@ -580,7 +577,7 @@ file_name_completion (Lisp_Object file, Lisp_Object dirname, bool all_flag,
 		    if (skip < 0)
 		      continue;
 
-		    if (0 <= scmp (dp->d_name + skip, p1, elt_len))
+		    if (scmp (dp->d_name + skip, p1, elt_len) >= 0)
 		      continue;
 		    break;
 		  }
@@ -602,9 +599,8 @@ file_name_completion (Lisp_Object file, Lisp_Object dirname, bool all_flag,
 		    skip = len - SCHARS (elt);
 		    if (skip < 0) continue;
 
-		    if (0 <= scmp (dp->d_name + skip,
-				   SSDATA (elt),
-				   SCHARS (elt)))
+		    if (scmp (dp->d_name + skip, SSDATA (elt), SCHARS (elt))
+			>= 0)
 		      continue;
 		    break;
 		  }
@@ -1017,7 +1013,7 @@ return a list with one element, taken from `user-real-login-name'.  */)
 #endif
   if (EQ (users, Qnil))
     /* At least current user is always known. */
-    users = Fcons (Vuser_real_login_name, Qnil);
+    users = list1 (Vuser_real_login_name);
   return users;
 }
 

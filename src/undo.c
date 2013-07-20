@@ -229,10 +229,9 @@ record_first_change (void)
   if (base_buffer->base_buffer)
     base_buffer = base_buffer->base_buffer;
 
-  bset_undo_list
-    (current_buffer,
-     Fcons (Fcons (Qt, make_lisp_time (base_buffer->modtime)),
-	    BVAR (current_buffer, undo_list)));
+  bset_undo_list (current_buffer,
+		  Fcons (Fcons (Qt, Fvisited_file_modtime ()),
+			 BVAR (current_buffer, undo_list)));
 }
 
 /* Record a change in property PROP (whose old value was VAL)
@@ -443,12 +442,6 @@ truncate_undo_list (struct buffer *b)
     bset_undo_list (b, Qnil);
 
   unbind_to (count, Qnil);
-}
-
-static _Noreturn void
-user_error (const char *msg)
-{
-  xsignal1 (Quser_error, build_string (msg));
 }
 
 

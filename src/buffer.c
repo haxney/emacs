@@ -150,6 +150,12 @@ static struct Lisp_Overlay * copy_overlays (struct buffer *, struct Lisp_Overlay
 static void modify_overlay (struct buffer *, ptrdiff_t, ptrdiff_t);
 static Lisp_Object buffer_lisp_local_variables (struct buffer *, bool);
 
+static void
+CHECK_OVERLAY (Lisp_Object x)
+{
+  CHECK_TYPE (OVERLAYP (x), Qoverlayp, x);
+}
+
 /* These setters are used only in this file, so they can be private.  */
 static void
 bset_abbrev_mode (struct buffer *b, Lisp_Object val)
@@ -607,7 +613,7 @@ even if it is dead.  The return value is never nil.  */)
 
   /* Put this in the alist of all live buffers.  */
   XSETBUFFER (buffer, b);
-  Vbuffer_alist = nconc2 (Vbuffer_alist, Fcons (Fcons (name, buffer), Qnil));
+  Vbuffer_alist = nconc2 (Vbuffer_alist, list1 (Fcons (name, buffer)));
   /* And run buffer-list-update-hook.  */
   if (!NILP (Vrun_hooks))
     call1 (Vrun_hooks, Qbuffer_list_update_hook);
@@ -818,7 +824,7 @@ CLONE nil means the indirect buffer's state is reset to default values.  */)
 
   /* Put this in the alist of all live buffers.  */
   XSETBUFFER (buf, b);
-  Vbuffer_alist = nconc2 (Vbuffer_alist, Fcons (Fcons (name, buf), Qnil));
+  Vbuffer_alist = nconc2 (Vbuffer_alist, list1 (Fcons (name, buf)));
 
   bset_mark (b, Fmake_marker ());
 
@@ -1539,7 +1545,7 @@ candidate_buffer (Lisp_Object b, Lisp_Object buffer)
 	  && BUFFER_LIVE_P (XBUFFER (b))
 	  && !BUFFER_HIDDEN_P (XBUFFER (b)));
 }
-	  
+
 DEFUN ("other-buffer", Fother_buffer, Sother_buffer, 0, 3, 0,
        doc: /* Return most recently selected buffer other than BUFFER.
 Buffers not visible in windows are preferred to visible buffers, unless
@@ -1728,18 +1734,6 @@ cleaning up all windows currently displaying the buffer to be killed. */)
   if (!BUFFER_LIVE_P (b))
     return Qnil;
 
-  /* Query if the buffer is still modified.  */
-  if (INTERACTIVE && !NILP (BVAR (b, filename))
-      && BUF_MODIFF (b) > BUF_SAVE_MODIFF (b))
-    {
-      GCPRO1 (buffer);
-      tem = do_yes_or_no_p (format2 ("Buffer %s modified; kill anyway? ",
-				     BVAR (b, name), make_number (0)));
-      UNGCPRO;
-      if (NILP (tem))
-	return Qnil;
-    }
-
   /* Run hooks with the buffer to be killed the current buffer.  */
   {
     ptrdiff_t count = SPECPDL_INDEX ();
@@ -1755,6 +1749,22 @@ cleaning up all windows currently displaying the buffer to be killed. */)
     if (NILP (tem))
       return unbind_to (count, Qnil);
 
+    /* Query if the buffer is still modified.  */
+    if (INTERACTIVE && !NILP (BVAR (b, filename))
+	&& BUF_MODIFF (b) > BUF_SAVE_MODIFF (b))
+      {
+        GCPRO1 (buffer);
+        tem = do_yes_or_no_p (format2 ("Buffer %s modified; kill anyway? ",
+				       BVAR (b, name), make_number (0)));
+	UNGCPRO;
+	if (NILP (tem))
+	  return unbind_to (count, Qnil);
+      }
+
+    /* If the hooks have killed the buffer, exit now.  */
+    if (!BUFFER_LIVE_P (b))
+      return unbind_to (count, Qt);
+
     /* Then run the hooks.  */
     Frun_hooks (1, &Qkill_buffer_hook);
     unbind_to (count, Qnil);
@@ -1769,7 +1779,7 @@ cleaning up all windows currently displaying the buffer to be killed. */)
      since anything can happen within do_yes_or_no_p.  */
 
   /* Don't kill the minibuffer now current.  */
-  if (EQ (buffer, XWINDOW (minibuf_window)->buffer))
+  if (EQ (buffer, XWINDOW (minibuf_window)->contents))
     return Qnil;
 
   /* When we kill an ordinary buffer which shares it's buffer text
@@ -1820,7 +1830,7 @@ cleaning up all windows currently displaying the buffer to be killed. */)
   /* If the buffer now current is shown in the minibuffer and our buffer
      is the sole other buffer give up.  */
   XSETBUFFER (tem, current_buffer);
-  if (EQ (tem, XWINDOW (minibuf_window)->buffer)
+  if (EQ (tem, XWINDOW (minibuf_window)->contents)
       && EQ (buffer, Fother_buffer (buffer, Qnil, Qnil)))
     return Qnil;
 
@@ -2196,14 +2206,19 @@ ends when the current command terminates.  Use `switch-to-buffer' or
   return buffer;
 }
 
+void
+restore_buffer (Lisp_Object buffer_or_name)
+{
+  Fset_buffer (buffer_or_name);
+}
+
 /* Set the current buffer to BUFFER provided if it is alive.  */
 
-Lisp_Object
+void
 set_buffer_if_live (Lisp_Object buffer)
 {
   if (BUFFER_LIVE_P (XBUFFER (buffer)))
     set_buffer_internal (XBUFFER (buffer));
-  return Qnil;
 }
 
 DEFUN ("barf-if-buffer-read-only", Fbarf_if_buffer_read_only,
@@ -2394,8 +2409,9 @@ DEFUN ("buffer-swap-text", Fbuffer_swap_text, Sbuffer_swap_text,
 	   BUF_MARKERS(buf) should either be for `buf' or dead.  */
 	eassert (!m->buffer);
   }
-  { /* Some of the C code expects that w->buffer == w->pointm->buffer.
-       So since we just swapped the markers between the two buffers, we need
+  { /* Some of the C code expects that both window markers of a
+       live window points to that window's buffer.  So since we
+       just swapped the markers between the two buffers, we need
        to undo the effect of this swap for window markers.  */
     Lisp_Object w = Fselected_window (), ws = Qnil;
     Lisp_Object buf1, buf2;
@@ -2405,12 +2421,19 @@ DEFUN ("buffer-swap-text", Fbuffer_swap_text, Sbuffer_swap_text,
       {
 	ws = Fcons (w, ws);
 	if (MARKERP (XWINDOW (w)->pointm)
-	    && (EQ (XWINDOW (w)->buffer, buf1)
-		|| EQ (XWINDOW (w)->buffer, buf2)))
+	    && (EQ (XWINDOW (w)->contents, buf1)
+		|| EQ (XWINDOW (w)->contents, buf2)))
 	  Fset_marker (XWINDOW (w)->pointm,
 		       make_number
-		       (BUF_BEGV (XBUFFER (XWINDOW (w)->buffer))),
-		       XWINDOW (w)->buffer);
+		       (BUF_BEGV (XBUFFER (XWINDOW (w)->contents))),
+		       XWINDOW (w)->contents);
+	if (MARKERP (XWINDOW (w)->start)
+	    && (EQ (XWINDOW (w)->contents, buf1)
+		|| EQ (XWINDOW (w)->contents, buf2)))
+	  Fset_marker (XWINDOW (w)->start,
+		       make_number
+		       (XBUFFER (XWINDOW (w)->contents)->last_window_start),
+		       XWINDOW (w)->contents);
 	w = Fnext_window (w, Qt, Qt);
       }
   }
@@ -3893,7 +3916,7 @@ modify_overlay (struct buffer *buf, ptrdiff_t start, ptrdiff_t end)
   if (buffer_window_count (buf) > 0)
     {
       /* ... it's visible in other window than selected,  */
-      if (buf != XBUFFER (XWINDOW (selected_window)->buffer))
+      if (buf != XBUFFER (XWINDOW (selected_window)->contents))
 	windows_or_buffers_changed = 1;
       /* ... or if we modify an overlay at the end of the buffer
 	 and so we cannot be sure that window end is still valid.  */
@@ -4585,7 +4608,6 @@ evaporate_overlays (ptrdiff_t pos)
 
 #ifdef USE_MMAP_FOR_BUFFERS
 
-#include <sys/types.h>
 #include <sys/mman.h>
 
 #ifndef MAP_ANON
@@ -4599,8 +4621,6 @@ evaporate_overlays (ptrdiff_t pos)
 #ifndef MAP_FAILED
 #define MAP_FAILED ((void *) -1)
 #endif
-
-#include <stdio.h>
 
 #if MAP_ANON == 0
 #include <fcntl.h>
@@ -4711,7 +4731,7 @@ mmap_init (void)
   if (mmap_fd <= 0)
     {
       /* No anonymous mmap -- we need the file descriptor.  */
-      mmap_fd = open ("/dev/zero", O_RDONLY);
+      mmap_fd = emacs_open ("/dev/zero", O_RDONLY, 0);
       if (mmap_fd == -1)
 	fatal ("Cannot open /dev/zero: %s", emacs_strerror (errno));
     }
@@ -5493,6 +5513,8 @@ This is the same as (default-value 'left-margin).  */);
   DEFVAR_BUFFER_DEFAULTS ("default-tab-width",
 			  tab_width,
 			  doc: /* Default value of `tab-width' for buffers that do not override it.
+NOTE: This controls the display width of a TAB character, and not
+the size of an indentation step.
 This is the same as (default-value 'tab-width).  */);
 
   DEFVAR_BUFFER_DEFAULTS ("default-case-fold-search",
@@ -5684,6 +5706,8 @@ Linefeed indents to this column in Fundamental mode.  */);
   DEFVAR_PER_BUFFER ("tab-width", &BVAR (current_buffer, tab_width),
 		     Qintegerp,
 		     doc: /* Distance between tab stops (for display of tab characters), in columns.
+NOTE: This controls the display width of a TAB character, and not
+the size of an indentation step.
 This should be an integer greater than zero.  */);
 
   DEFVAR_PER_BUFFER ("ctl-arrow", &BVAR (current_buffer, ctl_arrow), Qnil,
@@ -5875,29 +5899,44 @@ See also the functions `display-table-slot' and `set-display-table-slot'.  */);
   DEFVAR_PER_BUFFER ("left-margin-width", &BVAR (current_buffer, left_margin_cols),
 		     Qintegerp,
 		     doc: /* Width of left marginal area for display of a buffer.
-A value of nil means no marginal area.  */);
+A value of nil means no marginal area.
+
+Setting this variable does not take effect until a new buffer is displayed
+in a window.  To make the change take effect, call `set-window-buffer'.  */);
 
   DEFVAR_PER_BUFFER ("right-margin-width", &BVAR (current_buffer, right_margin_cols),
 		     Qintegerp,
 		     doc: /* Width of right marginal area for display of a buffer.
-A value of nil means no marginal area.  */);
+A value of nil means no marginal area.
+
+Setting this variable does not take effect until a new buffer is displayed
+in a window.  To make the change take effect, call `set-window-buffer'.  */);
 
   DEFVAR_PER_BUFFER ("left-fringe-width", &BVAR (current_buffer, left_fringe_width),
 		     Qintegerp,
 		     doc: /* Width of this buffer's left fringe (in pixels).
 A value of 0 means no left fringe is shown in this buffer's window.
-A value of nil means to use the left fringe width from the window's frame.  */);
+A value of nil means to use the left fringe width from the window's frame.
+
+Setting this variable does not take effect until a new buffer is displayed
+in a window.  To make the change take effect, call `set-window-buffer'.  */);
 
   DEFVAR_PER_BUFFER ("right-fringe-width", &BVAR (current_buffer, right_fringe_width),
 		     Qintegerp,
 		     doc: /* Width of this buffer's right fringe (in pixels).
 A value of 0 means no right fringe is shown in this buffer's window.
-A value of nil means to use the right fringe width from the window's frame.  */);
+A value of nil means to use the right fringe width from the window's frame.
+
+Setting this variable does not take effect until a new buffer is displayed
+in a window.  To make the change take effect, call `set-window-buffer'.  */);
 
   DEFVAR_PER_BUFFER ("fringes-outside-margins", &BVAR (current_buffer, fringes_outside_margins),
 		     Qnil,
 		     doc: /* Non-nil means to display fringes outside display margins.
-A value of nil means to display fringes between margins and buffer text.  */);
+A value of nil means to display fringes between margins and buffer text.
+
+Setting this variable does not take effect until a new buffer is displayed
+in a window.  To make the change take effect, call `set-window-buffer'.  */);
 
   DEFVAR_PER_BUFFER ("scroll-bar-width", &BVAR (current_buffer, scroll_bar_width),
 		     Qintegerp,
@@ -6060,6 +6099,11 @@ unmodified; (HIGH LOW USEC PSEC) is in the same style as (current-time)
 and is the visited file's modification time, as of that time.  If the
 modification time of the most recent save is different, this entry is
 obsolete.
+
+An entry (t . 0) means means the buffer was previously unmodified but
+its time stamp was unknown because it was not associated with a file.
+An entry (t . -1) is similar, except that it means the buffer's visited
+file did not exist.
 
 An entry (nil PROPERTY VALUE BEG . END) indicates that a text property
 was modified between BEG and END.  PROPERTY is the property name,

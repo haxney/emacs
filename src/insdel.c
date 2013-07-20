@@ -771,8 +771,13 @@ count_combining_after (const unsigned char *string,
 
 
 /* Insert a sequence of NCHARS chars which occupy NBYTES bytes
-   starting at STRING.  INHERIT, PREPARE and BEFORE_MARKERS
-   are the same as in insert_1.  */
+   starting at STRING.  INHERIT non-zero means inherit the text
+   properties from neighboring characters; zero means inserted text
+   will have no text properties.  PREPARE non-zero means call
+   prepare_to_modify_buffer, which checks that the region is not
+   read-only, and calls before-change-function and any modification
+   properties the text may have.  BEFORE_MARKERS non-zero means adjust
+   all markers that point at the insertion place to point after it.  */
 
 void
 insert_1_both (const char *string,
@@ -977,11 +982,15 @@ insert_from_string_1 (Lisp_Object string, ptrdiff_t pos, ptrdiff_t pos_byte,
 }
 
 /* Insert a sequence of NCHARS chars which occupy NBYTES bytes
-   starting at GPT_ADDR.  */
+   starting at GAP_END_ADDR - NBYTES (if text_at_gap_tail) and at
+   GPT_ADDR (if not text_at_gap_tail).  */
 
 void
-insert_from_gap (ptrdiff_t nchars, ptrdiff_t nbytes)
+insert_from_gap (ptrdiff_t nchars, ptrdiff_t nbytes, bool text_at_gap_tail)
 {
+  int ins_charpos = GPT;
+  int ins_bytepos = GPT_BYTE;
+
   if (NILP (BVAR (current_buffer, enable_multibyte_characters)))
     nchars = nbytes;
 
@@ -989,28 +998,31 @@ insert_from_gap (ptrdiff_t nchars, ptrdiff_t nbytes)
   MODIFF++;
 
   GAP_SIZE -= nbytes;
-  GPT += nchars;
+  if (! text_at_gap_tail)
+    {
+      GPT += nchars;
+      GPT_BYTE += nbytes;
+    }
   ZV += nchars;
   Z += nchars;
-  GPT_BYTE += nbytes;
   ZV_BYTE += nbytes;
   Z_BYTE += nbytes;
   if (GAP_SIZE > 0) *(GPT_ADDR) = 0; /* Put an anchor.  */
 
   eassert (GPT <= GPT_BYTE);
 
-  adjust_overlays_for_insert (GPT - nchars, nchars);
-  adjust_markers_for_insert (GPT - nchars, GPT_BYTE - nbytes,
-			     GPT, GPT_BYTE, 0);
+  adjust_overlays_for_insert (ins_charpos, nchars);
+  adjust_markers_for_insert (ins_charpos, ins_bytepos,
+			     ins_charpos + nchars, ins_bytepos + nbytes, 0);
 
   if (buffer_intervals (current_buffer))
     {
-      offset_intervals (current_buffer, GPT - nchars, nchars);
-      graft_intervals_into_buffer (NULL, GPT - nchars, nchars,
+      offset_intervals (current_buffer, ins_charpos, nchars);
+      graft_intervals_into_buffer (NULL, ins_charpos, nchars,
 				   current_buffer, 0);
     }
 
-  if (GPT - nchars < PT)
+  if (ins_charpos < PT)
     adjust_point (nchars, nbytes);
 
   check_markers ();
@@ -1794,7 +1806,7 @@ prepare_to_modify_buffer (ptrdiff_t start, ptrdiff_t end,
 
   /* If we're modifying the buffer other than shown in a selected window,
      let redisplay consider other windows if this buffer is visible.  */
-  if (XBUFFER (XWINDOW (selected_window)->buffer) != current_buffer
+  if (XBUFFER (XWINDOW (selected_window)->contents) != current_buffer
       && buffer_window_count (current_buffer))
     ++windows_or_buffers_changed;
 
@@ -1901,12 +1913,18 @@ prepare_to_modify_buffer (ptrdiff_t start, ptrdiff_t end,
    VARIABLE is the variable to maybe set to nil.
    NO-ERROR-FLAG is nil if there was an error,
    anything else meaning no error (so this function does nothing).  */
-static Lisp_Object
-reset_var_on_error (Lisp_Object val)
+struct rvoe_arg
 {
-  if (NILP (XCDR (val)))
-    Fset (XCAR (val), Qnil);
-  return Qnil;
+  Lisp_Object *location;
+  bool errorp;
+};
+
+static void
+reset_var_on_error (void *ptr)
+{
+  struct rvoe_arg *p = ptr;
+  if (p->errorp)
+    *p->location = Qnil;
 }
 
 /* Signal a change to the buffer immediately before it happens.
@@ -1924,6 +1942,7 @@ signal_before_change (ptrdiff_t start_int, ptrdiff_t end_int,
   Lisp_Object preserve_marker;
   struct gcpro gcpro1, gcpro2, gcpro3;
   ptrdiff_t count = SPECPDL_INDEX ();
+  struct rvoe_arg rvoe_arg;
 
   if (inhibit_modification_hooks)
     return;
@@ -1951,13 +1970,14 @@ signal_before_change (ptrdiff_t start_int, ptrdiff_t end_int,
   if (!NILP (Vbefore_change_functions))
     {
       Lisp_Object args[3];
-      Lisp_Object rvoe_arg = Fcons (Qbefore_change_functions, Qnil);
+      rvoe_arg.location = &Vbefore_change_functions;
+      rvoe_arg.errorp = 1;
 
       PRESERVE_VALUE;
       PRESERVE_START_END;
 
       /* Mark before-change-functions to be reset to nil in case of error.  */
-      record_unwind_protect (reset_var_on_error, rvoe_arg);
+      record_unwind_protect_ptr (reset_var_on_error, &rvoe_arg);
 
       /* Actually run the hook functions.  */
       args[0] = Qbefore_change_functions;
@@ -1966,7 +1986,7 @@ signal_before_change (ptrdiff_t start_int, ptrdiff_t end_int,
       Frun_hook_with_args (3, args);
 
       /* There was no error: unarm the reset_on_error.  */
-      XSETCDR (rvoe_arg, Qt);
+      rvoe_arg.errorp = 0;
     }
 
   if (buffer_has_overlays ())
@@ -1997,6 +2017,8 @@ void
 signal_after_change (ptrdiff_t charpos, ptrdiff_t lendel, ptrdiff_t lenins)
 {
   ptrdiff_t count = SPECPDL_INDEX ();
+  struct rvoe_arg rvoe_arg;
+
   if (inhibit_modification_hooks)
     return;
 
@@ -2013,9 +2035,8 @@ signal_after_change (ptrdiff_t charpos, ptrdiff_t lendel, ptrdiff_t lenins)
 	  && current_buffer != XBUFFER (combine_after_change_buffer))
 	Fcombine_after_change_execute ();
 
-      elt = Fcons (make_number (charpos - BEG),
-		   Fcons (make_number (Z - (charpos - lendel + lenins)),
-			  Fcons (make_number (lenins - lendel), Qnil)));
+      elt = list3i (charpos - BEG, Z - (charpos - lendel + lenins),
+		    lenins - lendel);
       combine_after_change_list
 	= Fcons (elt, combine_after_change_list);
       combine_after_change_buffer = Fcurrent_buffer ();
@@ -2031,10 +2052,11 @@ signal_after_change (ptrdiff_t charpos, ptrdiff_t lendel, ptrdiff_t lenins)
   if (!NILP (Vafter_change_functions))
     {
       Lisp_Object args[4];
-      Lisp_Object rvoe_arg = Fcons (Qafter_change_functions, Qnil);
+      rvoe_arg.location = &Vafter_change_functions;
+      rvoe_arg.errorp = 1;
 
       /* Mark after-change-functions to be reset to nil in case of error.  */
-      record_unwind_protect (reset_var_on_error, rvoe_arg);
+      record_unwind_protect_ptr (reset_var_on_error, &rvoe_arg);
 
       /* Actually run the hook functions.  */
       args[0] = Qafter_change_functions;
@@ -2044,7 +2066,7 @@ signal_after_change (ptrdiff_t charpos, ptrdiff_t lendel, ptrdiff_t lenins)
       Frun_hook_with_args (4, args);
 
       /* There was no error: unarm the reset_on_error.  */
-      XSETCDR (rvoe_arg, Qt);
+      rvoe_arg.errorp = 0;
     }
 
   if (buffer_has_overlays ())
@@ -2064,11 +2086,10 @@ signal_after_change (ptrdiff_t charpos, ptrdiff_t lendel, ptrdiff_t lenins)
   unbind_to (count, Qnil);
 }
 
-static Lisp_Object
+static void
 Fcombine_after_change_execute_1 (Lisp_Object val)
 {
   Vcombine_after_change_calls = val;
-  return val;
 }
 
 DEFUN ("combine-after-change-execute", Fcombine_after_change_execute,

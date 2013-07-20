@@ -182,11 +182,11 @@ during idle time."
       (org-set-local 'org-hide-leading-stars-before-indent-mode
 		     org-hide-leading-stars)
       (org-set-local 'org-hide-leading-stars t))
-    (make-local-variable 'filter-buffer-substring-functions)
     (add-hook 'filter-buffer-substring-functions
 	      (lambda (fun start end delete)
 		(org-indent-remove-properties-from-string
-		 (funcall fun start end delete))))
+		 (funcall fun start end delete)))
+              nil t)
     (org-add-hook 'after-change-functions 'org-indent-refresh-maybe nil 'local)
     (org-add-hook 'before-change-functions
 		  'org-indent-notify-modified-headline nil 'local)
@@ -213,7 +213,8 @@ during idle time."
     (remove-hook 'filter-buffer-substring-functions
 		 (lambda (fun start end delete)
 		   (org-indent-remove-properties-from-string
-		    (funcall fun start end delete))))
+		    (funcall fun start end delete)))
+                 t)
     (remove-hook 'after-change-functions 'org-indent-refresh-maybe 'local)
     (remove-hook 'before-change-functions
 		 'org-indent-notify-modified-headline 'local)
@@ -328,7 +329,7 @@ stopped."
      ;;    inline task or not.
      (let* ((case-fold-search t)
 	    (limited-re (org-get-limited-outline-regexp))
-	    (added-ind-per-lvl (1- org-indent-indentation-per-level))
+	    (added-ind-per-lvl (abs (1- org-indent-indentation-per-level)))
 	    (pf (save-excursion
 		  (and (ignore-errors (let ((outline-regexp limited-re))
 					(org-back-to-heading t)))

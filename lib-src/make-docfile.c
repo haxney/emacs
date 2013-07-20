@@ -276,7 +276,7 @@ struct rcsoc_state
 /* Output CH to the file or buffer in STATE.  Any pending newlines or
    spaces are output first.  */
 
-static inline void
+static void
 put_char (int ch, struct rcsoc_state *state)
 {
   int out_ch;
@@ -555,7 +555,7 @@ enum global_type
   LISP_OBJECT,
   EMACS_INTEGER,
   BOOLEAN,
-  FUNCTION,
+  FUNCTION
 };
 
 /* A single global.  */
@@ -1090,8 +1090,7 @@ search_lisp_doc_at_eol (FILE *infile)
   if (c2 != '"' || c1 != '\\')
     {
 #ifdef DEBUG
-      fprintf (stderr, "## non-docstring in %s (%s)\n",
-	       buffer, filename);
+      fprintf (stderr, "## non-docstring found\n");
 #endif
       if (c != EOF)
 	ungetc (c, infile);

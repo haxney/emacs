@@ -297,7 +297,7 @@ X resource class for the attribute."
 
 
 (declare-function internal-face-x-get-resource "xfaces.c"
-		  (resource class frame))
+		  (resource class &optional frame))
 
 (declare-function internal-set-lisp-face-attribute-from-resource "xfaces.c"
 		  (face attr value &optional frame))
@@ -536,11 +536,9 @@ Use `face-attribute' for finer control."
 (defun face-documentation (face)
   "Get the documentation string for FACE.
 If FACE is a face-alias, get the documentation for the target face."
-  (let ((alias (get face 'face-alias))
-        doc)
+  (let ((alias (get face 'face-alias)))
     (if alias
-        (progn
-          (setq doc (get alias 'face-documentation))
+        (let ((doc (get alias 'face-documentation)))
 	  (format "%s is an alias for the face `%s'.%s" face alias
                   (if doc (format "\n%s" doc)
                     "")))
@@ -757,7 +755,8 @@ is specified, `:italic' is ignored."
 FRAME nil or not specified means change face on all frames.
 Argument NOERROR is ignored and retained for compatibility.
 Use `set-face-attribute' for finer control of the font weight."
-  (interactive (list (read-face-name "Make which face bold")))
+  (interactive (list (read-face-name "Make which face bold"
+                                     (face-at-point t))))
   (set-face-attribute face frame :weight 'bold))
 
 
@@ -765,7 +764,8 @@ Use `set-face-attribute' for finer control of the font weight."
   "Make the font of FACE be non-bold, if possible.
 FRAME nil or not specified means change face on all frames.
 Argument NOERROR is ignored and retained for compatibility."
-  (interactive (list (read-face-name "Make which face non-bold")))
+  (interactive (list (read-face-name "Make which face non-bold"
+                                     (face-at-point t))))
   (set-face-attribute face frame :weight 'normal))
 
 
@@ -774,7 +774,8 @@ Argument NOERROR is ignored and retained for compatibility."
 FRAME nil or not specified means change face on all frames.
 Argument NOERROR is ignored and retained for compatibility.
 Use `set-face-attribute' for finer control of the font slant."
-  (interactive (list (read-face-name "Make which face italic")))
+  (interactive (list (read-face-name "Make which face italic"
+                                     (face-at-point t))))
   (set-face-attribute face frame :slant 'italic))
 
 
@@ -782,7 +783,8 @@ Use `set-face-attribute' for finer control of the font slant."
   "Make the font of FACE be non-italic, if possible.
 FRAME nil or not specified means change face on all frames.
 Argument NOERROR is ignored and retained for compatibility."
-  (interactive (list (read-face-name "Make which face non-italic")))
+  (interactive (list (read-face-name "Make which face non-italic"
+                                     (face-at-point t))))
   (set-face-attribute face frame :slant 'normal))
 
 
@@ -791,7 +793,8 @@ Argument NOERROR is ignored and retained for compatibility."
 FRAME nil or not specified means change face on all frames.
 Argument NOERROR is ignored and retained for compatibility.
 Use `set-face-attribute' for finer control of font weight and slant."
-  (interactive (list (read-face-name "Make which face bold-italic")))
+  (interactive (list (read-face-name "Make which face bold-italic"
+                                     (face-at-point t))))
   (set-face-attribute face frame :weight 'bold :slant 'italic))
 
 
@@ -911,7 +914,7 @@ If FRAME is omitted or nil, it means change face on all frames.
 If FACE specifies neither foreground nor background color,
 set its foreground and background to the background and foreground
 of the default face.  Value is FACE."
-  (interactive (list (read-face-name "Invert face")))
+  (interactive (list (read-face-name "Invert face" (face-at-point t))))
   (let ((fg (face-attribute face :foreground frame))
 	(bg (face-attribute face :background frame)))
     (if (not (and (eq fg 'unspecified) (eq bg 'unspecified)))
@@ -928,87 +931,61 @@ of the default face.  Value is FACE."
 ;;; Interactively modifying faces.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(defvar crm-separator) ; from crm.el
+
 (defun read-face-name (prompt &optional default multiple)
-  "Read one or more face names, defaulting to the face(s) at point.
-PROMPT should be a prompt string; it should not end in a space or
-a colon.
+  "Read one or more face names, prompting with PROMPT.
+PROMPT should not end in a space or a colon.
 
-The optional argument DEFAULT specifies the default face name(s)
-to return if the user just types RET.  If its value is non-nil,
-it should be a list of face names (symbols); in that case, the
-default return value is the `car' of DEFAULT (if the argument
-MULTIPLE is non-nil), or DEFAULT (if MULTIPLE is nil).  See below
-for the meaning of MULTIPLE.
+Return DEFAULT if the user enters the empty string.
+If DEFAULT is non-nil, it should be a single face or a list of face names
+\(symbols or strings).  In the latter case, return the `car' of DEFAULT
+\(if MULTIPLE is nil, see below), or DEFAULT (if MULTIPLE is non-nil).
 
-If DEFAULT is nil, the list of default face names is taken from
-the `read-face-name' property of the text at point, or, if that
-is nil, from the `face' property of the text at point.
+If MULTIPLE is non-nil, this function uses `completing-read-multiple'
+to read multiple faces with \"[ \\t]*,[ \\t]*\" as the separator regexp
+and it returns a list of face names.  Otherwise, it reads and returns
+a single face name."
+  (if (and default (not (stringp default)))
+      (setq default
+            (cond ((symbolp default)
+                   (symbol-name default))
+                  (multiple
+                   (mapconcat (lambda (f) (if (symbolp f) (symbol-name f) f))
+                              default ", "))
+                  ;; If we only want one, and the default is more than one,
+                  ;; discard the unwanted ones.
+                  (t (symbol-name (car default))))))
+  (if (and default (not multiple))
+      ;; For compatibility with `completing-read-multiple' use `crm-separator'
+      ;; to define DEFAULT if MULTIPLE is nil.
+      (setq default (car (split-string default crm-separator t))))
 
-This function uses `completing-read-multiple' with \",\" as the
-separator character.  Thus, the user may enter multiple face
-names, separated by commas.  The optional argument MULTIPLE
-specifies the form of the return value.  If MULTIPLE is non-nil,
-return a list of face names; if the user entered just one face
-name, the return value would be a list of one face name.
-Otherwise, return a single face name; if the user entered more
-than one face name, return only the first one."
-  (let ((faceprop (or (get-char-property (point) 'read-face-name)
-		      (get-char-property (point) 'face)))
-        (aliasfaces nil)
-        (nonaliasfaces nil)
-	faces)
-    ;; Try to get a face name from the buffer.
-    (if (memq (intern-soft (thing-at-point 'symbol)) (face-list))
-	(setq faces (list (intern-soft (thing-at-point 'symbol)))))
-    ;; Add the named faces that the `face' property uses.
-    (if (and (listp faceprop)
-	     ;; Don't treat an attribute spec as a list of faces.
-	     (not (keywordp (car faceprop)))
-	     (not (memq (car faceprop) '(foreground-color background-color))))
-	(dolist (f faceprop)
-	  (if (symbolp f)
-	      (push f faces)))
-      (if (symbolp faceprop)
-	  (push faceprop faces)))
-    (delete-dups faces)
-
+  (let ((prompt (if default
+                    (format "%s (default `%s'): " prompt default)
+                  (format "%s: " prompt)))
+        aliasfaces nonaliasfaces faces)
     ;; Build up the completion tables.
     (mapatoms (lambda (s)
-                (if (custom-facep s)
+                (if (facep s)
                     (if (get s 'face-alias)
                         (push (symbol-name s) aliasfaces)
                       (push (symbol-name s) nonaliasfaces)))))
-
-    ;; If we only want one, and the default is more than one,
-    ;; discard the unwanted ones now.
-    (unless multiple
-      (if faces
-	  (setq faces (list (car faces)))))
-    (require 'crm)
-    (let* ((input
-	    ;; Read the input.
-	    (completing-read-multiple
-	     (if (or faces default)
-		 (format "%s (default `%s'): " prompt
-			 (if faces (mapconcat 'symbol-name faces ",")
-			   default))
-	       (format "%s: " prompt))
-	     (completion-table-in-turn nonaliasfaces aliasfaces)
-	     nil t nil 'face-name-history
-	     (if faces (mapconcat 'symbol-name faces ","))))
-	   ;; Canonicalize the output.
-	   (output
-	    (cond ((or (equal input "") (equal input '("")))
-		   (or faces (unless (stringp default) default)))
-		  ((stringp input)
-		   (mapcar 'intern (split-string input ", *" t)))
-		  ((listp input)
-		   (mapcar 'intern input))
-		  (input))))
-      ;; Return either a list of faces or just one face.
-      (if multiple
-	  output
-	(car output)))))
+    (if multiple
+        (progn
+          (dolist (face (completing-read-multiple
+                         prompt
+                         (completion-table-in-turn nonaliasfaces aliasfaces)
+                         nil t nil 'face-name-history default))
+            ;; Ignore elements that are not faces
+            ;; (for example, because DEFAULT was "all faces")
+            (if (facep face) (push (intern face) faces)))
+          (nreverse faces))
+      (let ((face (completing-read
+                   prompt
+                   (completion-table-in-turn nonaliasfaces aliasfaces)
+                   nil t nil 'face-name-history default)))
+        (if (facep face) (intern face))))))
 
 ;; Not defined without X, but behind window-system test.
 (defvar x-bitmap-file-path)
@@ -1192,7 +1169,7 @@ of a global face.  Value is the new attribute value."
     ;; pixmap file name won't start with an open-paren.
     (and (memq attribute '(:stipple :box :underline))
 	 (stringp new-value)
-	 (string-match "^[[(]" new-value)
+	 (string-match-p "^[[(]" new-value)
 	 (setq new-value (read new-value)))
     new-value))
 
@@ -1236,7 +1213,7 @@ and the face and its settings are obtained by querying the user."
 			  :slant (if italic-p 'italic 'normal)
 			  :underline underline
 			  :inverse-video inverse-p)
-    (setq face (read-face-name "Modify face"))
+    (setq face (read-face-name "Modify face" (face-at-point t)))
     (apply #'set-face-attribute face frame
 	   (read-all-face-attributes face frame))))
 
@@ -1248,13 +1225,13 @@ Value is a list (FACE NEW-VALUE) where FACE is the face read
 \(a symbol), and NEW-VALUE is value read."
   (cond ((eq attribute :font)
 	 (let* ((prompt "Set font-related attributes of face")
-		(face (read-face-name prompt))
+		(face (read-face-name prompt (face-at-point t)))
 		(font (read-face-font face frame)))
 	   (list face font)))
 	(t
 	 (let* ((attribute-name (face-descriptive-attribute-name attribute))
 		(prompt (format "Set %s of face" attribute-name))
-		(face (read-face-name prompt))
+		(face (read-face-name prompt (face-at-point t)))
 		(new-value (read-face-attribute face attribute frame)))
 	   (list face new-value)))))
 
@@ -1293,7 +1270,7 @@ arg, prompt for a regular expression."
 	  (delq nil
 		(mapcar (lambda (f)
 			  (let ((s (symbol-name f)))
-			    (when (or all-faces (string-match regexp s))
+			    (when (or all-faces (string-match-p regexp s))
 			      (setq max-length (max (length s) max-length))
 			      f)))
 			(sort (face-list) #'string-lessp))))
@@ -1349,10 +1326,8 @@ arg, prompt for a regular expression."
     (setq disp-frame (if window (window-frame window)
 		       (car (frame-list))))
     (or (eq frame disp-frame)
-	(let ((faces (face-list)))
-	  (while faces
-	    (copy-face (car faces) (car faces) frame disp-frame)
-	    (setq faces (cdr faces)))))))
+	(dolist (face (face-list))
+	  (copy-face face face frame disp-frame)))))
 
 
 (defun describe-face (face &optional frame)
@@ -1363,7 +1338,9 @@ and FRAME defaults to the selected frame.
 If the optional argument FRAME is given, report on face FACE in that frame.
 If FRAME is t, report on the defaults for face FACE (for new frames).
 If FRAME is omitted or nil, use the selected frame."
-  (interactive (list (read-face-name "Describe face" 'default t)))
+  (interactive (list (read-face-name "Describe face"
+                                     (or (face-at-point t) 'default)
+                                     t)))
   (let* ((attrs '((:family . "Family")
 		  (:foundry . "Foundry")
 		  (:width . "Width")
@@ -1869,7 +1846,7 @@ resulting color name in the echo area."
       (when (and convert-to-RGB
 		 (not (string-equal color "")))
 	(let ((components (x-color-values color)))
-	  (unless (string-match "^#\\([a-fA-F0-9][a-fA-F0-9][a-fA-F0-9]\\)+$" color)
+	  (unless (string-match-p "^#\\(?:[a-fA-F0-9][a-fA-F0-9][a-fA-F0-9]\\)+$" color)
 	    (setq color (format "#%04X%04X%04X"
 				(logand 65535 (nth 0 components))
 				(logand 65535 (nth 1 components))
@@ -1877,23 +1854,33 @@ resulting color name in the echo area."
     (when msg (message "Color: `%s'" color))
     color))
 
-
-(defun face-at-point ()
+(defun face-at-point (&optional thing multiple)
   "Return the face of the character after point.
 If it has more than one face, return the first one.
-Return nil if it has no specified face."
-  (let* ((faceprop (or (get-char-property (point) 'read-face-name)
-                       (get-char-property (point) 'face)
-                       'default))
-         (face (cond ((symbolp faceprop) faceprop)
-                     ;; List of faces (don't treat an attribute spec).
-                     ;; Just use the first face.
-                     ((and (consp faceprop) (not (keywordp (car faceprop)))
-                           (not (memq (car faceprop)
-				      '(foreground-color background-color))))
-                      (car faceprop))
-                     (t nil))))         ; Invalid face value.
-    (if (facep face) face nil)))
+If THING is non-nil try first to get a face name from the buffer.
+IF MULTIPLE is non-nil, return a list of all faces.
+Return nil if there is no face."
+  (let (faces)
+    (if thing
+        ;; Try to get a face name from the buffer.
+        (let ((face (intern-soft (thing-at-point 'symbol))))
+          (if (facep face)
+              (push face faces))))
+    ;; Add the named faces that the `read-face-name' or `face' property uses.
+    (let ((faceprop (or (get-char-property (point) 'read-face-name)
+                        (get-char-property (point) 'face))))
+      (cond ((facep faceprop)
+             (push faceprop faces))
+            ((and (listp faceprop)
+                  ;; Don't treat an attribute spec as a list of faces.
+                  (not (keywordp (car faceprop)))
+                  (not (memq (car faceprop)
+                             '(foreground-color background-color))))
+             (dolist (face faceprop)
+               (if (facep face)
+                   (push face faces))))))
+    (setq faces (delete-dups (nreverse faces)))
+    (if multiple faces (car faces))))
 
 (defun foreground-color-at-point ()
   "Return the foreground color of the character after point."
@@ -2105,10 +2092,14 @@ the above example."
 		(not (funcall pred type)))
       ;; Strip off last hyphen and what follows, then try again
       (setq type
-	    (if (setq hyphend (string-match "[-_][^-_]+$" type))
+	    (if (setq hyphend (string-match-p "[-_][^-_]+$" type))
 		(substring type 0 hyphend)
 	      nil))))
   type)
+
+(defvar tty-setup-hook nil
+  "Hook run after running the initialization function of a new text terminal.
+This can be used to fine tune the `input-decode-map', for example.")
 
 (defun tty-run-terminal-initialization (frame &optional type)
   "Run the special initialization code for the terminal type of FRAME.
@@ -2135,7 +2126,8 @@ terminal type to a different value."
 		       type)
 	(when (fboundp term-init-func)
 	  (funcall term-init-func))
-	(set-terminal-parameter frame 'terminal-initted term-init-func)))))
+	(set-terminal-parameter frame 'terminal-initted term-init-func)
+	(run-hooks 'tty-setup-hook)))))
 
 ;; Called from C function init_display to initialize faces of the
 ;; dumped terminal frame on startup.
@@ -2301,7 +2293,6 @@ terminal type to a different value."
     (t :inverse-video t))
   "Basic face for highlighting trailing whitespace."
   :version "21.1"
-  :group 'whitespace-faces	; like `show-trailing-whitespace'
   :group 'basic-faces)
 
 (defface escape-glyph
@@ -2627,7 +2618,7 @@ also the same size as FACE on FRAME, or fail."
       (let ((fonts (x-list-fonts pattern face frame 1)))
 	(or fonts
 	    (if face
-		(if (string-match "\\*" pattern)
+		(if (string-match-p "\\*" pattern)
 		    (if (null (face-font face))
 			(error "No matching fonts are the same height as the frame default font")
 		      (error "No matching fonts are the same height as face `%s'" face))

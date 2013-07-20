@@ -1,7 +1,6 @@
 ;;; mh-comp.el --- MH-E functions for composing and sending messages
 
-;; Copyright (C) 1993, 1995, 1997, 2000-2013 Free Software Foundation,
-;; Inc.
+;; Copyright (C) 1993, 1995, 1997, 2000-2013 Free Software Foundation, Inc.
 
 ;; Author: Bill Wohler <wohler@newt.com>
 ;; Maintainer: Bill Wohler <wohler@newt.com>
@@ -587,6 +586,13 @@ See also `mh-compose-forward-as-mime-flag',
              (mh-forwarded-letter-subject orig-from orig-subject)))
         (mh-insert-fields "Subject:" forw-subject)
         (goto-char (point-min))
+        ;; Set the local value of mh-mail-header-separator according to what is
+        ;; present in the buffer...
+        (set (make-local-variable 'mh-mail-header-separator)
+             (save-excursion
+               (goto-char (mh-mail-header-end))
+               (buffer-substring-no-properties (point) (mh-line-end-position))))
+        (set (make-local-variable 'mail-header-separator) mh-mail-header-separator) ;override sendmail.el
         ;; If using MML, translate MH-style directive
         (if (equal mh-compose-insertion 'mml)
             (save-excursion
@@ -1197,18 +1203,18 @@ discarded."
         (save-excursion
           (let ((search-result nil))
             (while fields
-              (let ((field (car fields))
-                    (syntax-table mh-regexp-in-field-syntax-table))
-                (if (null syntax-table)
-                    (let ((case-fold-search t))
-                      (cond
-                       ((string-match field "^To$\\|^[BD]?cc$\\|^From$")
-                        (setq syntax-table mh-addr-syntax-table))
-                       ((string-match field "^Fcc$")
-                        (setq syntax-table mh-fcc-syntax-table))
-                       (t
-                        (setq syntax-table (syntax-table)))
-                       )))
+              (let* ((field (car fields))
+                     (syntax-table
+                      (or mh-regexp-in-field-syntax-table
+                          (let ((case-fold-search t))
+                            (cond
+                             ((string-match field "^To$\\|^[BD]?cc$\\|^From$")
+                              mh-addr-syntax-table)
+                             ((string-match field "^Fcc$")
+                              mh-fcc-syntax-table)
+                             (t
+                              (syntax-table)))
+                            ))))
                 (if (and (mh-goto-header-field field)
                          (set-syntax-table syntax-table)
                          (re-search-forward

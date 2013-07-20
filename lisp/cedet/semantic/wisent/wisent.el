@@ -46,8 +46,8 @@
            \\_         _/
             (     `o  `      (European ;-) Bison
              \\      ` /
-             (   D  ,¨       for Emacs!
-              ` ~ ,¨
+             (   D  ,\"       for Emacs!
+              ` ~ ,\"
                `\"\""
   :group 'semantic)
 
@@ -474,5 +474,9 @@ automaton has only one entry point."
     (car (aref stack 1))))
 
 (provide 'semantic/wisent/wisent)
+
+;; Local variables:
+;; generated-autoload-load-name: "semantic/wisent/wisent"
+;; End:
 
 ;;; semantic/wisent/wisent.el ends here

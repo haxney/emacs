@@ -1032,15 +1032,15 @@ Some of these headers are updated automatically.  See
 `gnus-article-update-date-headers' for details."
   :version "24.1"
   :group 'gnus-article-headers
-  :type '(repeat
-	  (item :tag "Universal time (UT)" :value 'ut)
-	  (item :tag "Local time zone" :value 'local)
-	  (item :tag "Readable English" :value 'english)
-	  (item :tag "Elapsed time" :value 'lapsed)
-	  (item :tag "Original and elapsed time" :value 'combined-lapsed)
-	  (item :tag "Original date header" :value 'original)
-	  (item :tag "ISO8601 format" :value 'iso8601)
-	  (item :tag "User-defined" :value 'user-defined)))
+  :type '(set
+	  (const :tag "Universal time (UT)" ut)
+	  (const :tag "Local time zone" local)
+	  (const :tag "Readable English" english)
+	  (const :tag "Elapsed time" lapsed)
+	  (const :tag "Original and elapsed time" combined-lapsed)
+	  (const :tag "Original date header" original)
+	  (const :tag "ISO8601 format" iso8601)
+	  (const :tag "User-defined" user-defined)))
 
 (defcustom gnus-article-update-date-headers nil
   "A number that says how often to update the date header (in seconds).
@@ -1651,7 +1651,7 @@ called with the group name as the parameter, and should return a
 regexp."
   :version "24.1"
   :group 'gnus-art
-  :type 'regexp)
+  :type '(choice regexp function))
 
 ;;; Internal variables
 
@@ -3430,15 +3430,13 @@ possible values."
 	 (visible-date (mail-fetch-field "Date"))
 	 pos date bface eface)
     (save-excursion
-      (goto-char (point-min))
-      (when (re-search-forward "^Date:" nil t)
-	(setq bface (get-text-property (point-at-bol) 'face)
-	      eface (get-text-property (1- (point-at-eol)) 'face)))
-      ;; Delete any old Date headers.
       (if date-position
 	  (progn
 	    (goto-char date-position)
 	    (setq date (get-text-property (point) 'original-date))
+	    (when (looking-at "[^:]+:[\t ]*")
+	      (setq bface (get-text-property (match-beginning 0) 'face)
+		    eface (get-text-property (match-end 0) 'face)))
 	    (delete-region (point)
 			   (progn
 			     (gnus-article-forward-header)
@@ -3454,12 +3452,26 @@ possible values."
 	    (narrow-to-region pos (if (search-forward "\n\n" nil t)
 				      (1+ (match-beginning 0))
 				    (point-max)))
-	    (goto-char (point-min))
-	    (while (re-search-forward "^Date:" nil t)
-	      (setq date (get-text-property (match-beginning 0) 'original-date))
-	      (delete-region (point-at-bol) (progn
-					      (gnus-article-forward-header)
-					      (point))))
+	    (while (setq pos (text-property-not-all pos (point-max)
+						    'gnus-date-type nil))
+	      (setq date (get-text-property pos 'original-date))
+	      (goto-char pos)
+	      (when (looking-at "[^:]+:[\t ]*")
+		(setq bface (get-text-property (match-beginning 0) 'face)
+		      eface (get-text-property (match-end 0) 'face)))
+	      (delete-region pos (or (text-property-any pos (point-max)
+							'gnus-date-type nil)
+				     (point-max))))
+	    (unless date ;; the 1st time
+	      (goto-char (point-min))
+	      (while (re-search-forward "^Date:[\t ]*" nil t)
+		(setq date (get-text-property (match-beginning 0)
+					      'original-date)
+		      bface (get-text-property (match-beginning 0) 'face)
+		      eface (get-text-property (match-end 0) 'face))
+		(delete-region (point-at-bol) (progn
+						(gnus-article-forward-header)
+						(point)))))
 	    (when (and (not date)
 		       visible-date)
 	      (setq date visible-date))
@@ -3476,20 +3488,25 @@ possible values."
 		       (list type))
 		      (t
 		       type)))
-    (insert (article-make-date-line date (or this-type 'ut)) "\n")
-    (forward-line -1)
-    (beginning-of-line)
-    (put-text-property (point) (1+ (point))
-		       'original-date date)
-    (put-text-property (point) (1+ (point))
-		       'gnus-date-type this-type)
+    (goto-char
+     (prog1
+	 (point)
+       (add-text-properties
+	(point)
+	(progn
+	  (insert (article-make-date-line date (or this-type 'ut)) "\n")
+	  (point))
+	(list 'original-date date 'gnus-date-type this-type))))
     ;; Do highlighting.
-    (when (looking-at "\\([^:]+\\): *\\(.*\\)$")
-      (put-text-property (match-beginning 1) (1+ (match-end 1))
-			 'face bface)
-      (put-text-property (match-beginning 2) (match-end 2)
-			 'face eface))
-    (forward-line 1)))
+    (when (looking-at
+	   "\\([^:]+:\\)[\t ]*\\(\\(?:[^\t\n ]+[\t ]+\\)*[^\t\n ]+\\)?")
+      (put-text-property (match-beginning 1) (match-end 1) 'face bface)
+      (when (match-beginning 2)
+	(put-text-property (match-beginning 2) (match-end 2) 'face eface))
+      (while (and (zerop (forward-line 1))
+		  (looking-at "[\t ]+\\(\\(?:[^\t\n ]+[\t ]+\\)*[^\t\n ]+\\)?"))
+	(when (match-beginning 1)
+	  (put-text-property (match-beginning 1) (match-end 1) 'face eface))))))
 
 (defun article-make-date-line (date type)
   "Return a DATE line of TYPE."
@@ -3669,25 +3686,26 @@ function and want to see what the date was before converting."
 	   (when (eq major-mode 'gnus-article-mode)
 	     (let ((old-line (count-lines (point-min) (point)))
 		   (old-column (- (point) (line-beginning-position)))
-		   (window-start
-		    (window-start (get-buffer-window (current-buffer)))))
-	       (goto-char (point-min))
-	       (while (re-search-forward "^Date:" nil t)
-		 (let ((type (get-text-property (match-beginning 0)
-						'gnus-date-type)))
-		   (when (memq type '(lapsed combined-lapsed user-format))
-		     (when (and window-start
-				(not (= window-start
-					(save-excursion
-					  (forward-line 1)
-					  (point)))))
-		       (setq window-start nil))
-		     (save-excursion
-		       (article-date-ut type t (match-beginning 0)))
-		     (forward-line 1)
-		     (when window-start
-		       (set-window-start (get-buffer-window (current-buffer))
-					 (point))))))
+		   (window-start (window-start w))
+		   (pos (point-min))
+		   type next end)
+	       (while (setq pos (text-property-not-all pos (point-max)
+						       'gnus-date-type nil))
+		 (setq next (or (next-single-property-change pos
+							     'gnus-date-type)
+				(point-max)))
+		 (setq type (get-text-property pos 'gnus-date-type))
+		 (when (memq type '(lapsed combined-lapsed user-defined))
+		   (article-date-ut type t pos)
+		   (setq end (or (next-single-property-change pos
+							      'gnus-date-type)
+				 (point-max)))
+		   (when window-start
+		     (if (/= window-start next)
+			 (setq window-start nil)
+		       (set-window-start w end)))
+		   (setq next end))
+		 (setq pos next))
 	       (goto-char (point-min))
 	       (when (> old-column 0)
 		 (setq old-line (1- old-line)))
@@ -6179,9 +6197,14 @@ Provided for backwards compatibility."
 
 (defun gnus-shr-put-image (data alt &optional flags)
   "Put image DATA with a string ALT.  Enable image to be deleted."
-  (let ((image (shr-put-image data (propertize (or alt "*")
-					       'gnus-image-category 'shr)
-			      flags)))
+  (let ((image (if flags
+		   (shr-put-image data (propertize (or alt "*")
+						   'gnus-image-category 'shr)
+				  flags)
+		 ;; Old `shr-put-image' doesn't take the optional `flags'
+		 ;; argument.
+		 (shr-put-image data (propertize (or alt "*")
+						 'gnus-image-category 'shr)))))
     (when image
       (gnus-add-image 'shr image))))
 
@@ -6629,11 +6652,7 @@ KEY is a string or a vector."
 ;;`gnus-agent-mode' in gnus-agent.el will define it.
 (defvar gnus-agent-summary-mode)
 (defvar gnus-draft-mode)
-;; Calling help-buffer will autoload help-mode.
 (defvar help-xref-stack-item)
-;; Emacs 22 doesn't load it in the batch mode.
-(eval-when-compile
-  (autoload 'help-buffer "help-mode"))
 
 (defun gnus-article-describe-bindings (&optional prefix)
   "Show a list of all defined keys, and their definitions.
@@ -6684,6 +6703,9 @@ then we display only bindings that start with that prefix."
 		    (with-current-buffer ,(current-buffer)
 		      (gnus-article-describe-bindings prefix)))
 		  ,prefix)))
+      ;; Loading `help-mode' here is necessary if `describe-bindings'
+      ;; is replaced with something, e.g. `helm-descbinds'.
+      (require 'help-mode)
       (with-current-buffer (let (help-xref-following) (help-buffer))
 	(setq help-xref-stack-item item)))))
 
@@ -6930,7 +6952,8 @@ If given a prefix, show the hidden text instead."
 	  (set-buffer buf))))))
 
 (defun gnus-block-private-groups (group)
-  (if (gnus-news-group-p group)
+  (if (or (gnus-news-group-p group)
+	  (gnus-member-of-valid 'global group))
       ;; Block nothing in news groups.
       nil
     ;; Block everything anywhere else.
@@ -7849,7 +7872,9 @@ url is put as the `gnus-button-url' overlay property on the button."
 	  (let (gnus-article-mouse-face widget-mouse-face)
 	    (while points
 	      (gnus-article-add-button (pop points) (pop points)
-				       'gnus-button-push beg)))
+				       'gnus-button-push
+				       (list beg (assq 'gnus-button-url-regexp
+						       gnus-button-alist)))))
 	  (let ((overlay (gnus-make-overlay start end)))
 	    (gnus-overlay-put overlay 'evaporate t)
 	    (gnus-overlay-put overlay 'gnus-button-url
@@ -8394,6 +8419,8 @@ For example:
 	(not (gnus-treat-predicate (car val))))
        ((eq pred 'typep)
 	(equal (car val) gnus-treat-type))
+       ((functionp pred)
+	(funcall pred))
        (t
 	(error "%S is not a valid predicate" pred)))))
    ((eq val t)

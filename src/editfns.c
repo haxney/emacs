@@ -373,7 +373,7 @@ get_pos_property (Lisp_Object position, register Lisp_Object prop, Lisp_Object o
   if (NILP (object))
     XSETBUFFER (object, current_buffer);
   else if (WINDOWP (object))
-    object = XWINDOW (object)->buffer;
+    object = XWINDOW (object)->contents;
 
   if (!BUFFERP (object))
     /* pos-property only makes sense in buffers right now, since strings
@@ -669,7 +669,8 @@ If the optional argument INHIBIT-CAPTURE-PROPERTY is non-nil, and OLD-POS has
 a non-nil property of that name, then any field boundaries are ignored.
 
 Field boundaries are not noticed if `inhibit-field-text-motion' is non-nil.  */)
-  (Lisp_Object new_pos, Lisp_Object old_pos, Lisp_Object escape_from_edge, Lisp_Object only_in_line, Lisp_Object inhibit_capture_property)
+  (Lisp_Object new_pos, Lisp_Object old_pos, Lisp_Object escape_from_edge,
+   Lisp_Object only_in_line, Lisp_Object inhibit_capture_property)
 {
   /* If non-zero, then the original point, before re-positioning.  */
   ptrdiff_t orig_point = 0;
@@ -735,7 +736,8 @@ Field boundaries are not noticed if `inhibit-field-text-motion' is non-nil.  */)
 	      /* This is the ONLY_IN_LINE case, check that NEW_POS and
 		 FIELD_BOUND are on the same line by seeing whether
 		 there's an intervening newline or not.  */
-	      || (find_newline (XFASTINT (new_pos), XFASTINT (field_bound),
+	      || (find_newline (XFASTINT (new_pos), -1,
+				XFASTINT (field_bound), -1,
 				fwd ? -1 : 1, &shortage, NULL, 1),
 		  shortage != 0)))
 	/* Constrain NEW_POS to FIELD_BOUND.  */
@@ -836,22 +838,21 @@ This function does not move point.  */)
 Lisp_Object
 save_excursion_save (void)
 {
-  return make_save_value
-    ("oooo",
-     Fpoint_marker (),
+  return make_save_obj_obj_obj_obj
+    (Fpoint_marker (),
      /* Do not copy the mark if it points to nowhere.  */
      (XMARKER (BVAR (current_buffer, mark))->buffer
       ? Fcopy_marker (BVAR (current_buffer, mark), Qnil)
       : Qnil),
      /* Selected window if current buffer is shown in it, nil otherwise.  */
-     ((XBUFFER (XWINDOW (selected_window)->buffer) == current_buffer)
+     (EQ (XWINDOW (selected_window)->contents, Fcurrent_buffer ())
       ? selected_window : Qnil),
      BVAR (current_buffer, mark_active));
 }
 
 /* Restore saved buffer before leaving `save-excursion' special form.  */
 
-Lisp_Object
+void
 save_excursion_restore (Lisp_Object info)
 {
   Lisp_Object tem, tem1, omark, nmark;
@@ -913,7 +914,7 @@ save_excursion_restore (Lisp_Object info)
   tem = XSAVE_OBJECT (info, 2);
   if (WINDOWP (tem)
       && !EQ (tem, selected_window)
-      && (tem1 = XWINDOW (tem)->buffer,
+      && (tem1 = XWINDOW (tem)->contents,
 	  (/* Window is live...  */
 	   BUFFERP (tem1)
 	   /* ...and it shows the current buffer.  */
@@ -925,7 +926,6 @@ save_excursion_restore (Lisp_Object info)
  out:
 
   free_misc (info);
-  return Qnil;
 }
 
 DEFUN ("save-excursion", Fsave_excursion, Ssave_excursion, 0, UNEVALLED, 0,
@@ -1484,9 +1484,7 @@ Lisp_Object
 make_lisp_time (EMACS_TIME t)
 {
   int ns = EMACS_NSECS (t);
-  return make_time_tail (EMACS_SECS (t),
-			 list2 (make_number (ns / 1000),
-				make_number (ns % 1000 * 1000)));
+  return make_time_tail (EMACS_SECS (t), list2i (ns / 1000, ns % 1000 * 1000));
 }
 
 /* Decode a Lisp list SPECIFIED_TIME that represents a time.
@@ -1946,7 +1944,7 @@ usage: (encode-time SECOND MINUTE HOUR DAY MONTH YEAR &optional ZONE)  */)
 	  EMACS_INT zone_hr = abszone / (60*60);
 	  int zone_min = (abszone/60) % 60;
 	  int zone_sec = abszone % 60;
-	  sprintf (tzbuf, tzbuf_format, "-" + (XINT (zone) < 0),
+	  sprintf (tzbuf, tzbuf_format, &"-"[XINT (zone) < 0],
 		   zone_hr, zone_min, zone_sec);
 	  tzstring = tzbuf;
 	}
@@ -2809,18 +2807,16 @@ determines whether case is significant or ignored.  */)
   return make_number (0);
 }
 
-static Lisp_Object
+static void
 subst_char_in_region_unwind (Lisp_Object arg)
 {
   bset_undo_list (current_buffer, arg);
-  return arg;
 }
 
-static Lisp_Object
+static void
 subst_char_in_region_unwind_1 (Lisp_Object arg)
 {
   bset_filename (current_buffer, arg);
-  return arg;
 }
 
 DEFUN ("subst-char-in-region", Fsubst_char_in_region,
@@ -3331,7 +3327,7 @@ save_restriction_save (void)
     }
 }
 
-Lisp_Object
+void
 save_restriction_restore (Lisp_Object data)
 {
   struct buffer *cur = NULL;
@@ -3398,8 +3394,6 @@ save_restriction_restore (Lisp_Object data)
 
   if (cur)
     set_buffer_internal (cur);
-
-  return Qnil;
 }
 
 DEFUN ("save-restriction", Fsave_restriction, Ssave_restriction, 0, UNEVALLED, 0,
@@ -3492,7 +3486,7 @@ usage: (message-box FORMAT-STRING &rest ARGS)  */)
       {
 	Lisp_Object pane, menu;
 	struct gcpro gcpro1;
-	pane = Fcons (Fcons (build_string ("OK"), Qt), Qnil);
+	pane = list1 (Fcons (build_string ("OK"), Qt));
 	GCPRO1 (pane);
 	menu = Fcons (val, pane);
 	Fx_popup_dialog (Qt, menu, Qt);
@@ -3627,7 +3621,7 @@ usage: (format STRING &rest OBJECTS)  */)
   ptrdiff_t bufsize = sizeof initial_buffer;
   ptrdiff_t max_bufsize = STRING_BYTES_BOUND + 1;
   char *p;
-  Lisp_Object buf_save_value IF_LINT (= {0});
+  ptrdiff_t buf_save_value_index IF_LINT (= 0);
   char *format, *end, *format_start;
   ptrdiff_t formatlen, nchars;
   /* True if the format is multibyte.  */
@@ -3958,7 +3952,7 @@ usage: (format STRING &rest OBJECTS)  */)
 		   trailing "d").  */
 		pMlen = sizeof pMd - 2
 	      };
-	      verify (0 < USEFUL_PRECISION_MAX);
+	      verify (USEFUL_PRECISION_MAX > 0);
 
 	      int prec;
 	      ptrdiff_t padding, sprintf_bytes;
@@ -4236,12 +4230,15 @@ usage: (format STRING &rest OBJECTS)  */)
 	  {
 	    buf = xmalloc (bufsize);
 	    sa_must_free = 1;
-	    buf_save_value = make_save_pointer (buf);
-	    record_unwind_protect (safe_alloca_unwind, buf_save_value);
+	    buf_save_value_index = SPECPDL_INDEX ();
+	    record_unwind_protect_ptr (xfree, buf);
 	    memcpy (buf, initial_buffer, used);
 	  }
 	else
-	  XSAVE_POINTER (buf_save_value, 0) = buf = xrealloc (buf, bufsize);
+	  {
+	    buf = xrealloc (buf, bufsize);
+	    set_unwind_protect_ptr (buf_save_value_index, xfree, buf);
+	  }
 
 	p = buf + used;
       }

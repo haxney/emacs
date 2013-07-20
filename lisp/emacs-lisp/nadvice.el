@@ -23,7 +23,7 @@
 
 ;; This package lets you add behavior (which we call "piece of advice") to
 ;; existing functions, like the old `advice.el' package, but with much fewer
-;; bells ans whistles.  It comes in 2 parts:
+;; bells and whistles.  It comes in 2 parts:
 ;;
 ;; - The first part lets you add/remove functions, similarly to
 ;;   add/remove-hook, from any "place" (i.e. as accepted by `setf') that
@@ -41,10 +41,13 @@
   '((:around "\300\301\302\003#\207" 5)
     (:before "\300\301\002\"\210\300\302\002\"\207" 4)
     (:after "\300\302\002\"\300\301\003\"\210\207" 5)
+    (:override "\300\301\"\207" 4)
     (:after-until "\300\302\002\"\206\013\000\300\301\002\"\207" 4)
     (:after-while "\300\302\002\"\205\013\000\300\301\002\"\207" 4)
     (:before-until "\300\301\002\"\206\013\000\300\302\002\"\207" 4)
-    (:before-while "\300\301\002\"\205\013\000\300\302\002\"\207" 4))
+    (:before-while "\300\301\002\"\205\013\000\300\302\002\"\207" 4)
+    (:filter-args "\300\302\301!\"\207" 5)
+    (:filter-return "\301\300\302\"!\207" 5))
   "List of descriptions of how to add a function.
 Each element has the form (WHERE BYTECODE STACK) where:
   WHERE is a keyword indicating where the function is added.
@@ -158,12 +161,13 @@ WHERE is a symbol to select an entry in `advice--where-alist'."
     (advice--make-1 (nth 1 desc) (nth 2 desc)
                     function main props)))
 
-(defun advice--member-p (function definition)
+(defun advice--member-p (function name definition)
   (let ((found nil))
     (while (and (not found) (advice--p definition))
       (if (or (equal function (advice--car definition))
-              (equal function (cdr (assq 'name (advice--props definition)))))
-          (setq found t)
+              (when name
+                (equal name (cdr (assq 'name (advice--props definition))))))
+          (setq found definition)
         (setq definition (advice--cdr definition))))
     found))
 
@@ -207,7 +211,6 @@ WHERE is a symbol to select an entry in `advice--where-alist'."
 ;;;###autoload
 (defmacro add-function (where place function &optional props)
   ;; TODO:
-  ;; - obsolete with-wrapper-hook (mostly requires buffer-local support).
   ;; - provide some kind of control over ordering.  E.g. debug-on-entry, ELP
   ;;   and tracing want to stay first.
   ;; - maybe let `where' specify some kind of predicate and use it
@@ -226,18 +229,20 @@ call OLDFUN here:
 `:before'	(lambda (&rest r) (apply FUNCTION r) (apply OLDFUN r))
 `:after'	(lambda (&rest r) (prog1 (apply OLDFUN r) (apply FUNCTION r)))
 `:around'	(lambda (&rest r) (apply FUNCTION OLDFUN r))
+`:override'	(lambda (&rest r) (apply FUNCTION r))
 `:before-while'	(lambda (&rest r) (and (apply FUNCTION r) (apply OLDFUN r)))
 `:before-until'	(lambda (&rest r) (or  (apply FUNCTION r) (apply OLDFUN r)))
 `:after-while'	(lambda (&rest r) (and (apply OLDFUN r) (apply FUNCTION r)))
 `:after-until'	(lambda (&rest r) (or  (apply OLDFUN r) (apply FUNCTION r)))
+`:filter-args'	(lambda (&rest r) (apply OLDFUN (funcall FUNCTION r)))
+`:filter-return'(lambda (&rest r) (funcall FUNCTION (apply OLDFUN r)))
 If FUNCTION was already added, do nothing.
 PROPS is an alist of additional properties, among which the following have
 a special meaning:
 - `name': a string or symbol.  It can be used to refer to this piece of advice.
 
-PLACE cannot be a simple variable.  Instead it should either be
-\(default-value 'VAR) or (local 'VAR) depending on whether FUNCTION
-should be applied to VAR buffer-locally or globally.
+If PLACE is a simple variable, only its global value will be affected.
+Use (local 'VAR) if you want to apply FUNCTION to VAR buffer-locally.
 
 If one of FUNCTION or OLDFUN is interactive, then the resulting function
 is also interactive.  There are 3 cases:
@@ -250,15 +255,21 @@ is also interactive.  There are 3 cases:
   (cond ((eq 'local (car-safe place))
          (setq place `(advice--buffer-local ,@(cdr place))))
         ((symbolp place)
-         (error "Use (default-value '%S) or (local '%S)" place place)))
+         (setq place `(default-value ',place))))
   `(advice--add-function ,where (gv-ref ,place) ,function ,props))
 
 ;;;###autoload
 (defun advice--add-function (where ref function props)
-  (unless (advice--member-p function (gv-deref ref))
+  (let ((a (advice--member-p function (cdr (assq 'name props))
+                             (gv-deref ref))))
+    (when a
+      ;; The advice is already present.  Remove the old one, first.
+      (setf (gv-deref ref)
+            (advice--remove-function (gv-deref ref) (advice--car a))))
     (setf (gv-deref ref)
           (advice--make where function (gv-deref ref) props))))
 
+;;;###autoload
 (defmacro remove-function (place function)
   "Remove the FUNCTION piece of advice from PLACE.
 If FUNCTION was not added to PLACE, do nothing.
@@ -302,8 +313,7 @@ of the piece of advice."
   (when (get symbol 'advice--saved-rewrite)
     (put symbol 'advice--saved-rewrite nil))
   (setq newdef (advice--normalize symbol newdef))
-  (let* ((olddef (advice--strip-macro
-		  (if (fboundp symbol) (symbol-function symbol))))
+  (let* ((olddef (advice--strip-macro (symbol-function symbol)))
          (oldadv
           (cond
 	   ((null (get symbol 'advice--pending))
@@ -313,15 +323,18 @@ of the piece of advice."
 			   symbol)
 		  nil)))
 	   ((or (not olddef) (autoloadp olddef))
-	    (prog1 (get symbol 'advice--pending)
-	      (put symbol 'advice--pending nil)))
+            (get symbol 'advice--pending))
            (t (message "Dropping left-over advice--pending for %s" symbol)
-              (put symbol 'advice--pending nil)
               olddef))))
-    (let* ((snewdef (advice--strip-macro newdef))
-	   (snewadv (advice--subst-main oldadv snewdef)))
-      (funcall (or fsetfun #'fset) symbol
-	       (if (eq snewdef newdef) snewadv (cons 'macro snewadv))))))
+    (if (and newdef (not (autoloadp newdef)))
+        (let* ((snewdef (advice--strip-macro newdef))
+               (snewadv (advice--subst-main oldadv snewdef)))
+          (put symbol 'advice--pending nil)
+          (funcall (or fsetfun #'fset) symbol
+                   (if (eq snewdef newdef) snewadv (cons 'macro snewadv))))
+      (unless (eq oldadv (get symbol 'advice--pending))
+        (put symbol 'advice--pending (advice--subst-main oldadv nil)))
+      (funcall (or fsetfun #'fset) symbol newdef))))
     
 
 ;;;###autoload
@@ -334,7 +347,7 @@ is defined as a macro, alias, command, ..."
   ;; - change all defadvice in lisp/**/*.el.
   ;; - rewrite advice.el on top of this.
   ;; - obsolete advice.el.
-  (let* ((f (and (fboundp symbol) (symbol-function symbol)))
+  (let* ((f (symbol-function symbol))
 	 (nf (advice--normalize symbol f)))
     (unless (eq f nf) ;; Most importantly, if nf == nil!
       (fset symbol nf))
@@ -359,48 +372,44 @@ is defined as a macro, alias, command, ..."
 ;;;###autoload
 (defun advice-remove (symbol function)
   "Like `remove-function' but for the function named SYMBOL.
-Contrary to `remove-function', this will work also when SYMBOL is a macro
-and it will not signal an error if SYMBOL is not `fboundp'.
+Contrary to `remove-function', this also works when SYMBOL is a macro
+or an autoload and it preserves `fboundp'.
 Instead of the actual function to remove, FUNCTION can also be the `name'
 of the piece of advice."
-  (when (fboundp symbol)
-    (let ((f (symbol-function symbol)))
-      ;; Can't use the `if' place here, because the body is too large,
-      ;; resulting in use of code that only works with lexical-scoping.
-      (remove-function (if (eq (car-safe f) 'macro)
-                           (cdr f)
-                         (symbol-function symbol))
-                       function)
-      (unless (advice--p
-               (if (eq (car-safe f) 'macro) (cdr f) (symbol-function symbol)))
-        ;; Not advised any more.
-        (remove-function (get symbol 'defalias-fset-function)
-                         #'advice--defalias-fset)
-        (if (eq (symbol-function symbol)
-                (cdr (get symbol 'advice--saved-rewrite)))
-            (fset symbol (car (get symbol 'advice--saved-rewrite))))))
-    nil))
+  (let ((f (symbol-function symbol)))
+    ;; Can't use the `if' place here, because the body is too large,
+    ;; resulting in use of code that only works with lexical-scoping.
+    (remove-function (if (eq (car-safe f) 'macro)
+                         (cdr f)
+                       (symbol-function symbol))
+                     function)
+    (unless (advice--p
+             (if (eq (car-safe f) 'macro) (cdr f) (symbol-function symbol)))
+      ;; Not advised any more.
+      (remove-function (get symbol 'defalias-fset-function)
+                       #'advice--defalias-fset)
+      (if (eq (symbol-function symbol)
+              (cdr (get symbol 'advice--saved-rewrite)))
+          (fset symbol (car (get symbol 'advice--saved-rewrite))))))
+  nil)
 
-;; (defun advice-mapc (fun symbol)
-;;   "Apply FUN to every function added as advice to SYMBOL.
-;; FUN is called with a two arguments: the function that was added, and the
-;; properties alist that was specified when it was added."
-;;   (let ((def (or (get symbol 'advice--pending)
-;;                  (if (fboundp symbol) (symbol-function symbol)))))
-;;     (while (advice--p def)
-;;       (funcall fun (advice--car def) (advice--props def))
-;;       (setq def (advice--cdr def)))))
+(defun advice-mapc (fun def)
+  "Apply FUN to every advice function in DEF.
+FUN is called with a two arguments: the function that was added, and the
+properties alist that was specified when it was added."
+  (while (advice--p def)
+    (funcall fun (advice--car def) (advice--props def))
+    (setq def (advice--cdr def))))
 
 ;;;###autoload
 (defun advice-member-p (advice function-name)
   "Return non-nil if ADVICE has been added to FUNCTION-NAME.
 Instead of ADVICE being the actual function, it can also be the `name'
 of the piece of advice."
-  (advice--member-p advice
+  (advice--member-p advice advice
                     (or (get function-name 'advice--pending)
 			(advice--strip-macro
-			 (if (fboundp function-name)
-			     (symbol-function function-name))))))
+                         (symbol-function function-name)))))
 
 ;; When code is advised, called-interactively-p needs to be taught to skip
 ;; the advising frames.

@@ -1,12 +1,13 @@
-;;; package.el --- Simple package system for Emacs
+;;; package.el --- Simple package system for Emacs  -*- lexical-binding:t -*-
 
 ;; Copyright (C) 2007-2013 Free Software Foundation, Inc.
 
 ;; Author: Tom Tromey <tromey@redhat.com>
 ;;         Daniel Hackney <dan@haxney.org>
 ;; Created: 10 Mar 2007
-;; Version: 1.0
+;; Version: 1.0.1
 ;; Keywords: tools
+;; Package-Requires: ((tabulated-list "1.0"))
 
 ;; This file is part of GNU Emacs.
 
@@ -142,17 +143,12 @@
 ;; - Allow optional package dependencies
 ;;   then if we require 'bbdb', bbdb-specific lisp in lisp/bbdb
 ;;   and just don't compile to add to load path ...?
-;; - David Kastrup pointed out on the xemacs list that for GPL it
-;;   is friendlier to ship the source tree.  We could "support" that
-;;   by just having a "src" subdir in the package.  This isn't ideal
-;;   but it probably is not worth trying to support random source
-;;   tree layouts, build schemes, etc.
 ;; - Our treatment of the info path is somewhat bogus
-;; - perhaps have an "unstable" tree in ELPA as well as a stable one
 
 ;;; Code:
 
-(require 'cl-lib)
+(eval-when-compile (require 'cl-lib))
+
 (require 'tabulated-list)
 (require 'tar-mode)
 (require 'lisp-mnt)
@@ -183,8 +179,7 @@ versions of all packages not specified by other elements.
 
 For an element (NAME VERSION), NAME is a package name (a symbol).
 VERSION should be t, a string, or nil.
-If VERSION is t, all versions are loaded, though obsolete ones
- will be put in `package--obsolete-alist' and not activated.
+If VERSION is t, the most recent version is activated.
 If VERSION is a string, only that version is ever loaded.
  Any other version, even if newer, is silently ignored.
  Hence, the package is \"held\" at that version.
@@ -218,22 +213,33 @@ a package can run arbitrary code."
   :group 'package
   :version "24.1")
 
+(defcustom package-pinned-packages nil
+  "An alist of packages that are pinned to a specific archive
+
+Each element has the form (SYM . ID).
+ SYM is a package, as a symbol.
+ ID is an archive name. This should correspond to an
+ entry in `package-archives'.
+
+If the archive of name ID does not contain the package SYM, no
+other location will be considered, which will make the
+package unavailable."
+  :type '(alist :key-type (symbol :tag "Package")
+                :value-type (string :tag "Archive name"))
+  :risky t
+  :group 'package
+  :version "24.4")
+
 (defconst package-archive-version 1
   "Version number of the package archive understood by this file.
 Lower version numbers than this will probably be understood as well.")
-
-(defconst package--archive-contents-filename "archive-contents"
-  "Name of the file used to store the metadata for an archive.")
-
-(defconst package-el-version "1.0"
-  "Version of package.el.")
 
 ;; We don't prime the cache since it tends to get out of date.
 (defvar package--archive-contents nil
   "Cache of the contents of the Emacs Lisp Package Archive.
 This is an alist mapping package names (symbols) to
-`package-desc' structures.")
-(put 'package--archive-contents 'risky-local-variable t)
+non-empty lists of `package-desc' structures.")
+(put 'package-archive-contents 'risky-local-variable t)
 
 (defcustom package-user-dir (file-name-as-directory (locate-user-emacs-file "elpa"))
   "Directory containing the user's Emacs Lisp packages.
@@ -263,6 +269,8 @@ contrast, `package-user-dir' contains packages for personal use."
   :group 'package
   :version "24.1")
 
+(defvar package--default-summary "No description available.")
+
 (cl-defstruct (package-desc
                ;; Rename the default constructor from `make-package-desc'.
                (:constructor package-desc-create)
@@ -272,115 +280,90 @@ contrast, `package-user-dir' contains packages for personal use."
                (:constructor
                 package-desc-from-define
                 (name-string version-string &optional summary requirements
-                             &key kind archive commentary
-                             &aux (name (intern name-string))
-                             (version (version-to-list version-string))
-                             (reqs (package-parse-requires-header requirements)))))
+                 &key kind archive
+                 &aux
+                 (name (intern name-string))
+                 (version (version-to-list version-string))
+                 (reqs (mapcar #'(lambda (elt)
+                                   (list (car elt)
+                                         (version-to-list (cadr elt))))
+                               (if (eq 'quote (car requirements))
+                                   (nth 1 requirements)
+                                 requirements))))))
   "Structure containing information about an individual package.
-
 Slots:
 
-`name' Name of the package, as a symbol.
+`name'	Name of the package, as a symbol.
 
 `version' Version of the package, as a version list.
 
 `summary' Short description of the package, typically taken from
-the first line of the file.
+        the first line of the file.
 
-`reqs' Requirements of the package. A list of (PACKAGE
-VERSION-LIST) naming the dependent package and the minimum
-required version.
+`reqs'	Requirements of the package. A list of (PACKAGE
+        VERSION-LIST) naming the dependent package and the minimum
+        required version.
 
-`kind' The distribution format of the package. Currently, it is
-either `single' or `tar'.
+`kind'	The distribution format of the package. Currently, it is
+        either `single' or `tar'.
 
 `archive' The name of the archive (as a string) whence this
-package came.
+        package came.
 
-`commentary' Extended documentation of the package. This comes
-from the \"Commentary\" header in single-file packages or a
-\"foo-readme.txt\" file in multi-file packages."
-
+`dir'	The directory where the package is installed (if installed),
+        `builtin' if it is built-in, or nil otherwise."
   name
   version
-  (summary "No description available.")
+  (summary package--default-summary)
   reqs
   kind
   archive
-  commentary)
+  dir)
 
-;; The value is precomputed in finder-inf.el, but don't load that
-;; until it's needed (i.e. when `package-initialize' is called).
+;; Pseudo fields.
+(defun package-desc-full-name (pkg-desc)
+  (format "%s-%s"
+          (package-desc-name pkg-desc)
+          (package-version-join (package-desc-version pkg-desc))))
+
+(defun package-desc-suffix (pkg-desc)
+  (pcase (package-desc-kind pkg-desc)
+    (`single ".el")
+    (`tar ".tar")
+    (kind (error "Unknown package kind: %s" kind))))
+
+;; Package descriptor format used in finder-inf.el and package--builtins.
+(cl-defstruct (package--bi-desc
+               (:constructor package-make-builtin (version summary))
+               (:type vector))
+  version
+  reqs
+  summary)
+
 (defvar package--builtins nil
   "Alist of built-in packages.
 The actual value is initialized by loading the library
 `finder-inf'; this is not done until it is needed, e.g. by the
 function `package--built-in-p'.
 
-Each element has the form (PKG . DESC), where PKG is a package
-name (a symbol) and DESC is a `package-desc' structure.")
+Each element has the form (PKG . PACKAGE-BI-DESC), where PKG is a package
+name (a symbol) and DESC is a `package--bi-desc' structure.")
 (put 'package--builtins 'risky-local-variable t)
 
 (defvar package--alist nil
   "Alist of all packages available for activation.
-Each element has the form (PKG . DESC), where PKG is a package
-name (a symbol) and DESC is a `package-desc' structure.
+Each element has the form (PKG . DESCS), where PKG is a package
+name (a symbol) and DESCS is a non-empty list of `package-desc' structure,
+sorted by decreasing versions.
 
 This variable is set automatically by `package--load-descriptor',
 called via `package-initialize'.  To change which packages are
 loaded and/or activated, customize `package-load-list'.")
 
-(put 'package--alist 'risky-local-variable t)
-
-(defvar package--activated-list nil
+(defvar package-activated-list nil
+  ;; FIXME: This should implicitly include all builtin packages.
   "List of the names of currently activated packages.")
 (put 'package--activated-list 'risky-local-variable t)
-
-(defvar package--obsolete-alist nil
-  "Representation of obsolete packages.
-Like `package--alist', but maps package name to a second alist.
-The inner alist is keyed by version.
-
-Each element of the list is (NAME . VERSION-ALIST), where each
-entry in VERSION-ALIST is (VERSION-LIST . PACKAGE-DESC).")
-(put 'package--obsolete-alist 'risky-local-variable t)
-
-(defconst package-kind-to-suffix-alist
-  '((single . "el")
-    (tar . "tar"))
-  "An alist mapping archive kinds to the associated file suffix")
-
-(defconst package-readme-file-format "%s-readme.txt"
-  "Format of readme files for packages.")
-
-(defconst package-readme-installed-file "README"
-  "Name of the installed readme file.")
-
-(defun package-read-from-string (str)
-  "Read a Lisp expression from STR.
-Signal an error if the entire string was not used."
-  (let* ((read-data (read-from-string str))
-         (more-left
-          (condition-case nil
-              ;; The call to `ignore' suppresses a compiler warning.
-              (progn (ignore (read-from-string
-                              (substring str (cdr read-data))))
-                     t)
-            (end-of-file nil))))
-    (if more-left
-        (error "Can't read whole string")
-      (car read-data))))
-
-(defun package-parse-requires-header (requirements)
-  "Parse a \"Package-Requires:\" header into version lists.
-REQUIREMENTS should be a string like ((dep-name \"1.2.3\"))."
-  (let (sexp)
-    (if (stringp requirements)
-        (setq sexp (package-read-from-string requirements))
-      (setq sexp requirements))
-    (mapcar #'(lambda (elt) (list (car elt)
-                                  (version-to-list (cadr elt))))
-            sexp)))
 
 (defun package-version-join (vlist)
   "Return the version string corresponding to the list VLIST.
@@ -411,386 +394,18 @@ This is, approximately, the inverse of `version-to-list'.
           (pop str-list))
       (apply 'concat (nreverse str-list)))))
 
-(defun package-strip-rcs-id (str)
-  "Strip RCS version ID from the version string STR.
-If the result looks like a dotted numeric version, return it.
-Otherwise return nil."
-  (when str
-    (when (string-match "\\`[ \t]*[$]Revision:[ \t]+" str)
-      (setq str (substring str (match-end 0))))
-    (condition-case nil
-        (if (version-to-list str)
-            str)
-      (error nil))))
-
-(defun package-strip-version (dirname)
-  "Strip the version from a combined package name and version.
-E.g., if given \"quux-23.0\", will return \"quux\""
-  (if (string-match (concat "\\`" package-subdirectory-regexp "\\'") dirname)
-      (match-string 1 dirname)))
-
-(defun package-version-from-filename (filename)
-  "Extract a version list from FILENAME."
-  (let ((name (file-name-nondirectory filename)))
-    (when (string-match (concat "\\`" package-subdirectory-regexp "\\'") name)
-      (version-to-list (match-string 2 name)))))
-
-(defun package-desc-version-string (desc)
-  "Return the package version as a string."
-  (package-version-join (package-desc-version desc)))
-
-(defun package-desc-archive-url (desc)
-  "Return the archive URL of DESC."
-  (let* ((archive (package-desc-archive desc))
-         (url (cdr-safe (assoc archive package-archives))))
-    (or url (error "No archive named '%s'" archive))))
-
-(defun package-desc-base-name (desc)
-  "Return the base name of DESC, without a suffix.
-This is of the form \"foo-1.2.3\"."
-  (format "%s-%s"
-          (package-desc-name desc)
-          (package-version-join (package-desc-version desc))))
-
-(defun package-desc-filename (desc)
-  "Return the non-directory file name of DESC.
-This includes a suffix and is of the form \"foo-1.2.3.el\" or
-\"bar-4.5.6.tar\" for single and multi-file archives,
-respectively."
-  (let* ((kind (package-desc-kind desc))
-         (suffix (cdr-safe
-                  (assoc kind package-kind-to-suffix-alist))))
-    (unless suffix (error "No suffix for package kind %s" kind))
-    (format "%s.%s" (package-desc-base-name desc) suffix)))
-
-(defun package-desc-filename-no-version (desc)
-  "Return the non-directory file name of DESC, without a version.
-This includes a suffix and is of the form \"foo.el\" or
-\"bar.tar\" for single and multi-file archives, respectively."
-  (let* ((kind (package-desc-kind desc))
-         (suffix (cdr-safe
-                  (assoc kind package-kind-to-suffix-alist))))
-    (unless suffix (error "No suffix for package kind %s" kind))
-    (format "%s.%s" (package-desc-name desc) suffix)))
-
-(defun package-desc-url (desc)
-  "Return the URL from which to fetch DESC."
-  (let ((base-name (package-desc-filename desc))
-        (archive-url (package-desc-archive-url desc)))
-    (concat archive-url base-name)))
-
-(defun package-desc-user-install-dir (desc)
-  "Return the expected user install directory of DESC.
-This is the package name within `package-user-dir'. No check is
-made to determine whether the package is actually installed."
-  (file-name-as-directory
-   (expand-file-name (package-desc-base-name desc)
-                     package-user-dir)))
-
-(defun package-desc-install-dir-actual (desc)
-  "Finds the directory in which DESC is installed.
-Checks to see whether DESC is actually installed in each
-candidate directory.
-
-Returns the directory in which DESC is installed or nil if it is
-not in any of `package-directory-list'."
-  (let* ((pkg-dir (package-desc-base-name desc))
-         pkg-dir-abs)
-    (cl-dolist (dir (cons package-user-dir package-directory-list))
-      (setq pkg-dir-abs (expand-file-name pkg-dir dir))
-      (if (file-directory-p pkg-dir-abs)
-          (cl-return pkg-dir-abs)))))
-
-(defun package-desc-descriptor-file (desc)
-  "Return the full file name of the package descriptor for DESC.
-This is of the form \"/path/to/foo-1.2.3/foo-pkg.el\"."
-  (expand-file-name (format "%s-pkg.el" (package-desc-name desc))
-                    (package-desc-user-install-dir desc)))
-
-(defun package-desc-readme-file (desc)
-  "Return the name of the readme file for DESC.
-This is of the form \"foo-readme.txt\"."
-  (format package-readme-file-format (package-desc-name desc)))
-
-(defun package-desc-installed-readme-file (desc)
-  "Return the absolute path to the readme file for DESC."
-  (expand-file-name package-readme-installed-file
-                    (package-desc-user-install-dir desc)))
-
-(defun package-desc-get-readme (desc)
-  "Return the contents of the readme file for DESC.
-If DESC is a built-in package, reads the \";;; Commentary\"
-section from its source.
-
-For other packages, it tries the following steps:
-
- - Read from a file named README in the installation
-   directory. For a package \"foo\", this would be in
-   \"foo-1.2.3/README\" within `package-user-dir'
-
- - Read from a file named \"foo-readme.txt\" in `package-user-dir'
-
- - Try to download a readme from the archive.
-
- - Return an empty string"
-  (if (assq (package-desc-name desc) package--builtins)
-      ;; For built-in packages, insert the commentary.
-      (let ((fn (locate-file (format "%s.el" package-name) load-path
-                             load-file-rep-suffixes))
-            (opoint (point)))
-        (or (package--strip-commentary (lm-commentary fn)) ""))
-
-    (let (readme-file)
-      ;; For elpa packages, try an existing readme file in
-      ;; `package-user-dir'. If that fails, try downloading the
-      ;; commentary.
-      (cond ((file-readable-p
-              (setq readme-file (package-desc-installed-readme-file desc)))
-             (with-temp-buffer
-               (insert-file-contents readme-file)
-               (buffer-string)))
-
-            ((file-readable-p
-              (setq readme-file
-                    (expand-file-name (package-desc-readme-file desc)
-                                      package-user-dir)))
-             (with-temp-buffer
-               (insert-file-contents readme-file)
-               (buffer-string)))
-
-            ((condition-case nil
-                 (package--with-downloaded-file
-                     (package-archive-base package)
-                     (format package-readme-file-format package-name)
-                   (write-region nil nil (expand-file-name readme-file
-                                                           package-user-dir))
-                   (buffer-string))
-               (error "")))
-            (t "")))))
-
-(defun package-archive-base (name)
-  "Return the archive URL containing the package NAME.
-NAME must be a symbol."
-  (package-desc-archive-url (cdr (assq name package--archive-contents))))
-
-(defun package-desc-to-string (desc)
-  "Return a string representation of package DESC."
-  (let (print-level print-length)
-    (prin1-to-string
-     (list 'define-package
-           (symbol-name (package-desc-name desc))
-           (package-version-join (package-desc-version desc))
-           (package-desc-summary desc)
-           ;; Turn version lists into string form.
-           (mapcar
-            #'(lambda (elt)
-                (list (car elt)
-                      (package-version-join (cadr elt))))
-            (package-desc-reqs desc))))))
-
-(defun package-desc-to-archive-format (desc &optional body-only)
-  "Return a cons cell of the form used in \"archive-contents\" files.
-This is of the form \"(foo . [(1 2 3) nil \"Package about foo\" single])\".
-
-If BODY-ONLY is non-nil, do not include the package name and
-return only the body vector."
-  (let ((vec (vector (package-desc-version desc)
-                     (package-desc-reqs desc)
-                     (package-desc-summary desc)
-                     (package-desc-kind desc))))
-    (if body-only
-        vec
-      (cons (package-desc-name desc)
-            vec))))
-
-(defun package-desc-from-archive-format (pkg &optional archive)
-  "Return a `package-desc' from PKG, a \"archive-contents\" element.
-These are the offsets into the \"archive-contents\" array. They
-are formatted this way for historical reasons which is why they
-are magic numbers here."
-  (package-desc-create :name (car pkg)
-                       :version (aref (cdr pkg) 0)
-                       :reqs (aref (cdr pkg) 1)
-                       :summary (aref (cdr pkg) 2)
-                       :kind (aref (cdr pkg) 3)
-                       :archive archive))
-
-(defun package--match-descriptor-name (str)
-  "Return non-nil if STR is a valid package descriptor file name.
-Expects the string to be the package name.  The name must be of
-the form \"foo-1.2.3/foo-pkg.el\""
-  (and (string-match (concat "\\`" package-subdirectory-regexp) str)
-       (string= (format "%s/%s-pkg.el"
-                        (match-string 0 str)
-                        (match-string 1 str))
-                str)))
-
-(defun package--match-readme-name (str)
-  "Return non-nil if STR is a valid package readme file name.
-Expects the string to be the readme name.  The name must be of
-the form \"foo-1.2.3/README\""
-  (and (string-match (concat "\\`" package-subdirectory-regexp) str)
-       (string= (format "%s/README" (match-string 0 str)) str)))
-
-(defun package--buffer-tar-p ()
-  "Return non-nil if the current buffer is a tar file.
-This uses the internal function `tar-header-block-tokenize' from `tar-mode'"
-  (let ((old-multibyte-val enable-multibyte-characters))
-    (unwind-protect
-        (condition-case err
-            (progn (set-buffer-multibyte nil)
-                   (tar-header-magic
-                    (tar-header-block-tokenize (point-min)
-                                               tar-file-name-coding-system)))
-          (error nil))
-      (set-buffer-multibyte old-multibyte-val))))
-
-(defun package--file-from-tar (name-matcher)
-  "Get the contents of a file within a tar archive.
-NAME-MATCHER is a function of one argument which will receive the
-name of each file in the archive. It should return non-nil for
-the file whose contents should be returned.
-
-The current buffer in `tar-mode'."
-  (let* ((header-data (cl-find-if name-matcher
-                                  tar-parse-info
-                                  :key #'tar-header-name))
-         (start (tar-header-data-start header-data))
-         (end   (+ start (tar-header-size header-data))))
-    (with-current-buffer (if (tar-data-swapped-p) tar-data-buffer (current-buffer))
-      (buffer-substring-no-properties start end))))
-
-(defun package--strip-commentary (str)
-  "Strip the extraneous characters from STR, a commentary string."
-  (if str
+(defun package-load-descriptor (pkg-dir)
+  "Load the description file in directory PKG-DIR."
+  (let ((pkg-file (expand-file-name (package--description-file pkg-dir)
+                                    pkg-dir)))
+    (when (file-exists-p pkg-file)
       (with-temp-buffer
-        (insert str)
+        (insert-file-contents pkg-file)
         (goto-char (point-min))
-        ;; Delete the ";;; Commentary" section header
-        (lm-commentary-start)
-        (delete-region (match-beginning 0)
-                       (match-end 0))
-        (while (re-search-forward "^;+ " nil t)
-          (replace-match ""))
-
-        (goto-char (point-min))
-        (re-search-forward "\\S-")
-        (delete-region (point-min) (match-beginning 0))
-        (delete-trailing-whitespace)
-
-        (buffer-string))))
-
-(defun package-desc-from-buffer ()
-  "Return a `package-desc' for the package in the current buffer.
-Handles both single files tar archives.
-
-If the buffer is a tar file but is not in `tar-mode', enter
-`tar-mode'.
-
-If the buffer does not contain a conforming package, signal an
-error.  If there is a package, narrow the buffer to the file's
-boundaries."
-  (when (and (not (eq major-mode 'tar-mode))
-             (package--buffer-tar-p))
-    (tar-mode))
-  (if (eq major-mode 'tar-mode)
-      (let ((descriptor-contents
-             (package--file-from-tar #'package--match-descriptor-name))
-            (commentary
-             (package--file-from-tar #'package--match-readme-name))
-            pkg-def-parsed)
-        (unless descriptor-contents
-          (error "No package descriptor file found."))
-        (setq pkg-def-parsed (package-read-from-string descriptor-contents))
-        (unless (eq (car pkg-def-parsed) 'define-package)
-          (error "No `define-package' sexp is present in `%s-%s.el'"
-                 pkg-name (package-version-join pkg-version)))
-        (apply #'package-desc-from-define
-               (append (cdr pkg-def-parsed)
-                       '(:kind tar)
-                       (if commentary
-                           `(:commentary ,commentary)))))
-
-    (goto-char (point-min))
-    (unless (re-search-forward "^;;; \\([^ ]*\\)\\.el ---[ \t]*\\(.*?\\)[ \t]*\\(-\\*-.*-\\*-[ \t]*\\)?$" nil t)
-      (error "Packages lacks a file header"))
-    (let ((file-name (match-string-no-properties 1))
-          (summary   (match-string-no-properties 2))
-          (start     (line-beginning-position)))
-      (unless (search-forward (format ";;; %s.el ends here"  file-name))
-        (error "Package lacks a terminating comment"))
-      ;; Try to include a trailing newline.
-      (forward-line)
-      (narrow-to-region start (point))
-      ;; Use some headers we've invented to drive the process.
-      (let* ((requires-str (lm-header "package-requires"))
-             ;; Prefer Package-Version; if defined, the package author
-             ;; probably wants us to use it.  Otherwise try Version.
-             (pkg-version
-              (or (package-strip-rcs-id (lm-header "package-version"))
-                  (package-strip-rcs-id (lm-header "version"))))
-             (commentary (package--strip-commentary (lm-commentary))))
-
-        (unless pkg-version
-          (error "Package lacks a \"Version\" or \"Package-Version\" header"))
-        (package-desc-from-define file-name
-                                  pkg-version
-                                  summary
-                                  requires-str
-                                  :kind 'single
-                                  :commentary commentary)))))
-
-(defun package--read-defined (file-name pkg-dir)
-  "Read a `define-package' from FILE-NAME, a \"foo-pkg.el\" file.
-PKG-DIR must be the directory name of the package, that is, \"name-version\"."
-  (let* ((pkg-def-contents (with-temp-buffer
-                             (insert-file-contents-literally file-name)
-                             (buffer-string)))
-         (pkg-def-parsed (package-read-from-string pkg-def-contents))
-         (pkg-name (package-strip-version pkg-dir))
-         (pkg-version (package-version-from-filename pkg-dir))
-         desc)
-    (unless (eq (car pkg-def-parsed) 'define-package)
-      (error "No `define-package' sexp is present in `%s-%s.el'"
-             pkg-name (package-version-join pkg-version)))
-    (setq desc (apply #'package-desc-from-define
-                      (append (cdr pkg-def-parsed))))
-    (unless (equal (package-desc-version desc)
-                   pkg-version)
-      (error "Package has inconsistent versions"))
-    (unless (equal (symbol-name (package-desc-name desc)) pkg-name)
-      (error "Package has inconsistent names"))
-    desc))
-
-(defun package--load-descriptor (name version dir)
-  "Load the description file in directory DIR for package NAME.
-NAME is the package name as a symbol and VERSION must be a
-string."
-  (let* ((old-pkg (cdr-safe (assq name package--alist)))
-         (pkg-dir (expand-file-name (format "%s-%s" name version) dir))
-         (pkg-file (expand-file-name
-                    (format "%s-pkg.el" name)
-                    pkg-dir))
-         (pkg-desc (package--read-defined pkg-file (format "%s-%s" name version))))
-
-    (cond
-     ;; If there's no old package, just add this to `package--alist'.
-     ((null old-pkg)
-      (push (cons name pkg-desc) package--alist))
-     ((version-list-< (package-desc-version old-pkg)
-                      (version-to-list version))
-      ;; Remove the old package and declare it obsolete.
-      (package--mark-obsolete old-pkg)
-      (cl-delete (package-desc-name old-pkg) package--alist :key 'car)
-      (push package--alist (cons name pkg-desc)))
-     ;; You can have two packages with the same version, e.g. one in
-     ;; the system package directory and one in your private
-     ;; directory.  We just let the first one win.
-     ((not (version-list-= (package-desc-version old-pkg)
-                           (version-to-list version)))
-      ;; The package is born obsolete.
-      (package--mark-obsolete pkg-desc)))
-    pkg-desc))
+        (let ((pkg-desc (package-process-define-package
+                         (read (current-buffer)) pkg-file)))
+          (setf (package-desc-dir pkg-desc) pkg-dir)
+          pkg-desc)))))
 
 (defun package--load-all-descriptors ()
   "Load descriptors for installed Emacs Lisp packages.
@@ -800,60 +415,35 @@ controls which package subdirectories may be loaded.
 
 In each valid package subdirectory, this function loads the
 description file containing a call to `define-package', which
-updates `package--alist' and `package--obsolete-alist'."
-  (let ((regexp (concat "\\`" package-subdirectory-regexp "\\'")))
-    (dolist (dir (cons package-user-dir package-directory-list))
-      (when (file-directory-p dir)
-        (dolist (subdir (directory-files dir))
-          (when (string-match regexp subdir)
-            (package--maybe-load-descriptor (intern (match-string 1 subdir))
-                                            (match-string 2 subdir)
-                                            dir)))))))
+updates `package-alist'."
+  (dolist (dir (cons package-user-dir package-directory-list))
+    (when (file-directory-p dir)
+      (dolist (subdir (directory-files dir))
+        (let ((pkg-dir (expand-file-name subdir dir)))
+          (when (file-directory-p pkg-dir)
+            (package-load-descriptor pkg-dir)))))))
 
-(defun package--maybe-load-descriptor (name version dir)
-  "Maybe load a specific package from directory DIR.
-NAME is the package name as a symbol and VERSION is the package's
-version string. This function checks `package-load-list', before
-actually loading the package by calling`package--load-descriptor'."
-  (let ((force (assq name package-load-list))
-        (subdir (format "%s-%s" name version)))
-    (and (file-directory-p (expand-file-name subdir dir))
-         ;; Check `package-load-list':
-         (cond ((null force)
-                (memq 'all package-load-list))
-               ((null (setq force (cadr force)))
-                nil) ; disabled
-               ((eq force t)
-                t)
-               ((stringp force) ; held
-                (version-list-= (version-to-list version)
-                                (version-to-list force)))
-               (t
-                (error "Invalid element in `package-load-list'")))
-         ;; Actually load the descriptor:
-         (package--load-descriptor name version dir))))
+(defun package-disabled-p (pkg-name version)
+  "Return whether PKG-NAME at VERSION can be activated.
+The decision is made according to `package-load-list'.
+Return nil if the package can be activated.
+Return t if the package is completely disabled.
+Return the max version (as a string) if the package is held at a lower version."
+  (let ((force (assq pkg-name package-load-list)))
+    (cond ((null force) (not (memq 'all package-load-list)))
+          ((null (setq force (cadr force))) t) ; disabled
+          ((eq force t) nil)
+          ((stringp force)              ; held
+           (unless (version-list-= version (version-to-list force))
+             force))
+          (t (error "Invalid element in `package-load-list'")))))
 
-(defun package--dir (name version)
-  "Return the directory where a package is installed, or nil if none.
-NAME is the package name as a symbol and VERSION is a version list."
-  (let* ((subdir (format "%s-%s" name (package-version-join version)))
-         (dir-list (cons package-user-dir package-directory-list))
-         pkg-dir)
-    (while dir-list
-      (let ((subdir-full (expand-file-name subdir (car dir-list))))
-        (if (file-directory-p subdir-full)
-            (setq pkg-dir  subdir-full
-                  dir-list nil)
-          (setq dir-list (cdr dir-list)))))
-    pkg-dir))
-
-(defun package--activate-1 (desc)
-  (let* ((name (package-desc-name desc))
-         (version (package-desc-version desc))
-         (pkg-dir (package--dir name version)))
+(defun package-activate-1 (pkg-desc)
+  (let* ((name (package-desc-name pkg-desc))
+         (pkg-dir (package-desc-dir pkg-desc)))
     (unless pkg-dir
-      (error "Internal error: unable to find directory for `%s-%s'"
-             name (package-version-join version)))
+      (error "Internal error: unable to find directory for `%s'"
+             (package-desc-full-name pkg-desc)))
     ;; Add info node.
     (when (file-exists-p (expand-file-name "dir" pkg-dir))
       ;; FIXME: not the friendliest, but simple.
@@ -863,7 +453,7 @@ NAME is the package name as a symbol and VERSION is a version list."
     ;; Add to load path, add autoloads, and activate the package.
     (push pkg-dir load-path)
     (load (expand-file-name (format "%s-autoloads" name) pkg-dir) nil t)
-    (push name package--activated-list)
+    (push name package-activated-list)
     ;; Don't return nil.
     t))
 
@@ -871,96 +461,138 @@ NAME is the package name as a symbol and VERSION is a version list."
   "Return true if PACKAGE is built-in to Emacs.
 Optional arg MIN-VERSION, if non-nil, should be a version list
 specifying the minimum acceptable version."
-  (require 'finder-inf nil t) ; For `package--builtins'.
-  (if (eq package 'emacs)
-      (version-list-<= min-version (version-to-list emacs-version))
-    (let ((elt (assq package package--builtins)))
-      (and elt (version-list-<= min-version
-                                (package-desc-version (cdr elt)))))))
+  (let ((bi (assq package package--builtin-versions)))
+    (cond
+     (bi (version-list-<= min-version (cdr bi)))
+     (min-version nil)
+     (t
+      (require 'finder-inf nil t) ; For `package--builtins'.
+      (assq package package--builtins)))))
+
+(defun package--from-builtin (bi-desc)
+  (package-desc-create :name (pop bi-desc)
+                       :version (package--bi-desc-version bi-desc)
+                       :summary (package--bi-desc-summary bi-desc)
+                       :dir 'builtin))
 
 ;; This function goes ahead and activates a newer version of a package
 ;; if an older one was already activated.  This is not ideal; we'd at
 ;; least need to check to see if the package has actually been loaded,
 ;; and not merely activated.
-(defun package--activate (name min-version)
-  "Activate package NAME, of version MIN-VERSION or newer.
-MIN-VERSION should be a version list.
-If NAME has any dependencies, recursively activate them.
-Return nil if the package could not be activated."
-  (let ((pkg-desc (cdr (assq name package--alist)))
-        available-version found)
-    ;; Check if PACKAGE is available in `package--alist'.
-    (when pkg-desc
-      (setq available-version (package-desc-version pkg-desc)
-            found (version-list-<= min-version available-version)))
+(defun package-activate (package &optional force)
+  "Activate package PACKAGE.
+If FORCE is true, (re-)activate it if it's already activated."
+  (let ((pkg-descs (cdr (assq package package-alist))))
+    ;; Check if PACKAGE is available in `package-alist'.
+    (while
+        (when pkg-descs
+          (let ((available-version (package-desc-version (car pkg-descs))))
+            (or (package-disabled-p package available-version)
+                ;; Prefer a builtin package.
+                (package-built-in-p package available-version))))
+      (setq pkg-descs (cdr pkg-descs)))
     (cond
      ;; If no such package is found, maybe it's built-in.
-     ((null found)
-      (package--built-in-p name min-version))
+     ((null pkg-descs)
+      (package-built-in-p package))
      ;; If the package is already activated, just return t.
-     ((memq name package--activated-list)
+     ((and (memq package package-activated-list) (not force))
       t)
      ;; Otherwise, proceed with activation.
      (t
-      (let ((fail (catch 'dep-failure
-                    ;; Activate its dependencies recursively.
-                    (dolist (req (package-desc-reqs pkg-desc))
-                      (unless (package--activate (car req) (cadr req))
-                        (throw 'dep-failure req))))))
+      (let* ((pkg-vec (car pkg-descs))
+             (fail (catch 'dep-failure
+                     ;; Activate its dependencies recursively.
+                     (dolist (req (package-desc-reqs pkg-vec))
+                       (unless (package-activate (car req) (cadr req))
+                         (throw 'dep-failure req))))))
         (if fail
             (warn "Unable to activate package `%s'.
 Required package `%s-%s' is unavailable"
-                  name (car fail) (package-version-join (cadr fail)))
+                  package (car fail) (package-version-join (cadr fail)))
           ;; If all goes well, activate the package itself.
-          (package--activate-1 pkg-desc)))))))
+          (package-activate-1 pkg-vec)))))))
 
-(defun package--mark-obsolete (pkg-desc)
-  "Put PKG-DESC on the obsolete list, if not already there."
-  (let* ((name (package-desc-name pkg-desc))
-         (existing-elt (assq name package--obsolete-alist))
-         (pkg-version (package-desc-version pkg-desc)))
-    (if existing-elt
-        ;; Add this obsolete version to the list if it is not already there.
-        (unless (assoc pkg-version (cdr existing-elt))
-          (setcdr existing-elt (cons (cons pkg-version pkg-desc)
-                                     (cdr existing-elt))))
-      ;; Make a new association.
-      (push (cons name (list (cons pkg-version pkg-desc)))
-            package--obsolete-alist))))
+(defun define-package (_name-string _version-string
+                                    &optional _docstring _requirements
+                                    &rest _extra-properties)
+  "Define a new package.
+NAME-STRING is the name of the package, as a string.
+VERSION-STRING is the version of the package, as a string.
+DOCSTRING is a short description of the package, a string.
+REQUIREMENTS is a list of dependencies on other packages.
+ Each requirement is of the form (OTHER-PACKAGE OTHER-VERSION),
+ where OTHER-VERSION is a string.
 
-(defun package--generate-autoloads (desc)
-  "Generate autoloads for package DESC."
-  (require 'autoload)         ;; Load before we let-bind generated-autoload-file!
-  (let* ((auto-name (format "%s-autoloads.el" (package-desc-name desc)))
-         (pkg-dir (package-desc-user-install-dir desc))
+EXTRA-PROPERTIES is currently unused."
+  ;; FIXME: Placeholder!  Should we keep it?
+  (error "Don't call me!"))
+
+(defun package-process-define-package (exp origin)
+  (unless (eq (car-safe exp) 'define-package)
+    (error "Can't find define-package in %s" origin))
+  (let* ((new-pkg-desc (apply #'package-desc-from-define (cdr exp)))
+         (name (package-desc-name new-pkg-desc))
+         (version (package-desc-version new-pkg-desc))
+         (old-pkgs (assq name package-alist)))
+    (if (null old-pkgs)
+        ;; If there's no old package, just add this to `package-alist'.
+        (push (list name new-pkg-desc) package-alist)
+      ;; If there is, insert the new package at the right place in the list.
+      (while
+          (if (and (cdr old-pkgs)
+                   (version-list-< version
+                                   (package-desc-version (cadr old-pkgs))))
+              (setq old-pkgs (cdr old-pkgs))
+            (push new-pkg-desc (cdr old-pkgs))
+            nil)))
+    new-pkg-desc))
+
+;; From Emacs 22, but changed so it adds to load-path.
+(defun package-autoload-ensure-default-file (file)
+  "Make sure that the autoload file FILE exists and if not create it."
+  (unless (file-exists-p file)
+    (write-region
+     (concat ";;; " (file-name-nondirectory file)
+             " --- automatically extracted autoloads\n"
+             ";;\n"
+             ";;; Code:\n"
+             "(add-to-list 'load-path (or (file-name-directory #$) (car load-path)))\n"
+             "\n;; Local Variables:\n"
+             ";; version-control: never\n"
+             ";; no-byte-compile: t\n"
+             ";; no-update-autoloads: t\n"
+             ";; End:\n"
+             ";;; " (file-name-nondirectory file)
+             " ends here\n")
+     nil file))
+  file)
+
+(defvar generated-autoload-file)
+(defvar version-control)
+
+(defun package-generate-autoloads (name pkg-dir)
+  (require 'autoload)         ;Load before we let-bind generated-autoload-file!
+  (let* ((auto-name (format "%s-autoloads.el" name))
+         ;;(ignore-name (concat name "-pkg.el"))
          (generated-autoload-file (expand-file-name auto-name pkg-dir))
          (version-control 'never))
+    (package-autoload-ensure-default-file generated-autoload-file)
     (update-directory-autoloads pkg-dir)
     (let ((buf (find-buffer-visiting generated-autoload-file)))
-      (when buf (kill-buffer buf)))))
+      (when buf (kill-buffer buf)))
+    auto-name))
 
-(defun package--make-autoloads-and-compile (desc)
-  "Generate autoloads and do byte-compilation for DESC."
-  (package--generate-autoloads desc)
-  (let* ((pkg-dir (package-desc-user-install-dir desc))
-         (load-path (cons pkg-dir load-path))
-         (pkg-autoloads (expand-file-name
-                         (format "%s-autoloads" (package-desc-name desc))
-                         pkg-dir)))
-    ;; We must load the autoloads file before byte compiling, in
-    ;; case there are magic cookies to set up non-trivial paths.
-    (load pkg-autoloads nil t)
-    (byte-recompile-directory pkg-dir 0 t)))
+(defvar tar-parse-info)
+(declare-function tar-untar-buffer "tar-mode" ())
+(declare-function tar-header-name "tar-mode" (tar-header) t)
+(declare-function tar-header-link-type "tar-mode" (tar-header) t)
 
-(defun package--write-file-no-coding (file-name &optional mustbenew)
-  "Write the current buffer to FILE-NAME.
-Optional argument MUSTBENEW is the same as `write-region'."
-  (let ((buffer-file-coding-system 'no-conversion))
-    (write-region (point-min) (point-max) file-name nil nil nil mustbenew)))
-
-(defun package--untar-buffer (dir)
-  "Untar the current buffer into DIR.
-This uses `tar-untar-buffer' from Tar mode."
+(defun package-untar-buffer (dir)
+  "Untar the current buffer.
+This uses `tar-untar-buffer' from Tar mode.  All files should
+untar into a directory named DIR; otherwise, signal an error."
+  (require 'tar-mode)
   (tar-mode)
   ;; Make sure everything extracts into DIR.
   (let ((regexp (concat "\\`" (regexp-quote (expand-file-name dir)) "/"))
@@ -975,69 +607,79 @@ This uses `tar-untar-buffer' from Tar mode."
             (error "Package does not untar cleanly into directory %s/" dir)))))
   (tar-untar-buffer))
 
-(defun package-install-tar (&optional no-overwrite)
-  "Install a downloaded tar package from the current buffer.
-If there is already a package installed at the target directory,
-delete that directory unless NO-OVERWRITE is non-nil."
-  (tar-mode)
-  (let* ((desc (package-desc-from-buffer))
-         (target-dir (expand-file-name (package-desc-base-name desc)
-                                       package-user-dir))
-         (default-directory package-user-dir))
-    ;; If there is already a package with the same base name, delete
-    ;; it before continuing.
-    (when (and (not no-overwrite)
-               (file-exists-p target-dir))
-      (delete-directory target-dir t))
-    (package--untar-buffer target-dir)
-    (package--make-autoloads-and-compile desc)))
+(defun package-generate-description-file (pkg-desc pkg-dir)
+  "Create the foo-pkg.el file for single-file packages."
+  (let* ((name (package-desc-name pkg-desc))
+         (pkg-file (expand-file-name (package--description-file pkg-dir)
+                                     pkg-dir)))
+    (let ((print-level nil)
+          (print-quoted t)
+          (print-length nil))
+      (write-region
+       (concat
+        (prin1-to-string
+         (list 'define-package
+               (symbol-name name)
+               (package-version-join (package-desc-version pkg-desc))
+               (package-desc-summary pkg-desc)
+               (let ((requires (package-desc-reqs pkg-desc)))
+                 (list 'quote
+                       ;; Turn version lists into string form.
+                       (mapcar
+                        (lambda (elt)
+                          (list (car elt)
+                                (package-version-join (cadr elt))))
+                        requires)))))
+        "\n")
+       nil
+       pkg-file))))
 
-(defun package-install-single (&optional ignore)
-  "Install a single-file package from the current buffer.
-Includes any dependencies."
-  (interactive)
-  (let* ((desc (package-desc-from-buffer))
-         (name (package-desc-name desc))
-         (requires (package-desc-reqs desc))
-         (transaction (package--compute-transaction nil requires))
-         (pkg-dir (package-desc-user-install-dir desc))
-         (el-file (expand-file-name (format "%s.el" name) pkg-dir))
-         (pkg-file (package-desc-descriptor-file desc))
-         (readme-file (expand-file-name package-readme-installed-file pkg-dir)))
-    ;; Special case "package". Should this still be supported?
-    (if (eq name 'package)
-        (package--write-file-no-coding
-         (expand-file-name (format "%s.el" name) package-user-dir))
-      (package--install-transaction transaction)
-      ;; If there is already a package with the same base name,
-      ;; delete it before continuing.
-      (when (file-exists-p pkg-dir)
-        (delete-directory pkg-dir t))
-      (make-directory pkg-dir t)
-      (package--write-file-no-coding el-file 'excl)
+(defun package-unpack (pkg-desc)
+  "Install the contents of the current buffer as a package."
+  (let* ((name (package-desc-name pkg-desc))
+         (dirname (package-desc-full-name pkg-desc))
+         (pkg-dir (expand-file-name dirname package-user-dir)))
+    (pcase (package-desc-kind pkg-desc)
+      (`tar
+       (make-directory package-user-dir t)
+       ;; FIXME: should we delete PKG-DIR if it exists?
+       (let* ((default-directory (file-name-as-directory package-user-dir)))
+         (package-untar-buffer dirname)))
+      (`single
+       (let ((el-file (expand-file-name (format "%s.el" name) pkg-dir)))
+         (make-directory pkg-dir t)
+         (package--write-file-no-coding el-file)))
+      (kind (error "Unknown package kind: %S" kind)))
+    (package--make-autoloads-and-stuff pkg-desc pkg-dir)
+    ;; Update package-alist.
+    (let ((new-desc (package-load-descriptor pkg-dir)))
+      ;; FIXME: Check that `new-desc' matches `desc'!
+      ;; FIXME: Compilation should be done as a separate, optional, step.
+      ;; E.g. for multi-package installs, we should first install all packages
+      ;; and then compile them.
+      (package--compile new-desc))
+    ;; Try to activate it.
+    (package-activate name 'force)
+    pkg-dir))
 
-      ;; Write a README file if the package has commentary
-      (if (and (stringp (package-desc-commentary desc))
-               (> (length (package-desc-commentary desc)) 0))
-          (with-temp-buffer
-            (insert (package-desc-commentary desc))
-            (package--write-file-no-coding readme-file 'excl)))
+(defun package--make-autoloads-and-stuff (pkg-desc pkg-dir)
+  "Generate autoloads, description file, etc.. for PKG-DESC installed at PKG-DIR."
+  (package-generate-autoloads (package-desc-name pkg-desc) pkg-dir)
+  (let ((desc-file (package--description-file pkg-dir)))
+    (unless (file-exists-p desc-file)
+      (package-generate-description-file pkg-desc pkg-dir)))
+  ;; FIXME: Create foo.info and dir file from foo.texi?
+  )
 
-      (with-temp-file pkg-file
-        (insert (package-desc-to-string desc) "\n"))
-      (package--make-autoloads-and-compile desc))))
+(defun package--compile (pkg-desc)
+  "Byte-compile installed package PKG-DESC."
+  (package-activate-1 pkg-desc)
+  (byte-recompile-directory (package-desc-dir pkg-desc) 0 t))
 
 ;;;###autoload
 (defalias 'package-install-from-buffer 'package-install-single)
 
-(defmacro package--with-downloaded-package (desc &rest body)
-  "Downloads the package specified by DESC into the current buffer."
-  (declare (indent 1))
-  `(package--with-downloaded-file (package-desc-archive-url ,desc)
-                                  (package-desc-filename ,desc)
-                                  ,@body))
-
-(defmacro package--with-downloaded-file (location file &rest body)
+(defmacro package--with-work-buffer (location file &rest body)
   "Run BODY in a buffer containing the contents of FILE at LOCATION.
 LOCATION is the base location of a package archive, and should be
 one of the URLs (or file names) specified in `package-archives'.
@@ -1046,7 +688,7 @@ FILE is the name of a file relative to that base location.
 This macro retrieves FILE from LOCATION into a temporary buffer,
 and evaluates BODY while that buffer is current.  This work
 buffer is killed afterwards.  Return the last value in BODY."
-  (declare (indent 2))
+  (declare (indent 2) (debug t))
   `(let* ((http (string-match "\\`https?:" ,location))
           (buffer
            (if http
@@ -1077,88 +719,33 @@ It will move point to somewhere in the headers."
   (let ((response (url-http-parse-response)))
     (when (or (< response 200) (>= response 300))
       (error "Error during download request:%s"
-             (buffer-substring-no-properties (point) (progn
-                                                       (end-of-line)
-                                                       (point)))))))
+             (buffer-substring-no-properties (point) (line-end-position))))))
 
-(defun package--download-one-archive (archive file)
-  "Retrieve an archive file FILE from ARCHIVE, and cache it.
-ARCHIVE should be a cons cell of the form (NAME . LOCATION),
-similar to an entry in `package--alist'.  Save the cached copy to
-\"archives/NAME/archive-contents\" in `package-user-dir'."
-  (let* ((dir (expand-file-name "archives" package-user-dir))
-         (dir (expand-file-name (car archive) dir)))
-    (package--with-downloaded-file (cdr archive) file
-                                   ;; Read the retrieved buffer to make sure it is valid (e.g. it
-                                   ;; may fetch a URL redirect page).
-                                   (when (listp (read buffer))
-                                     (make-directory dir t)
-                                     (setq buffer-file-name (expand-file-name file dir))
-                                     (let ((version-control 'never))
-                                       (save-buffer))))))
+(defun package-install-from-archive (pkg-desc)
+  "Download and install a tar package."
+  (let ((location (package-archive-base pkg-desc))
+        (file (concat (package-desc-full-name pkg-desc)
+                      (package-desc-suffix pkg-desc))))
+    (package--with-work-buffer location file
+      (package-unpack pkg-desc))))
 
-(defun package--read-archive-file (file)
-  "Re-read archive file FILE, if it exists.
-Will return the data from the file, or nil if the file does not exist.
-Will throw an error if the archive version is too new."
-  (let ((filename (expand-file-name file package-user-dir)))
-    (when (file-exists-p filename)
-      (with-temp-buffer
-        (insert-file-contents-literally filename)
-        (let ((contents (read (current-buffer))))
-          (if (> (car contents) package-archive-version)
-              (error "Package archive version %d is higher than %d"
-                     (car contents) package-archive-version))
-          (cdr contents))))))
+(defvar package--initialized nil)
 
-(defun package--read-archive-contents (archive)
-  "Re-read archive contents for ARCHIVE.
-If successful, set the variable `package--archive-contents'.
-If the archive version is too new, signal an error."
-  (let* ((dir (concat "archives/" archive))
-         (contents-file (format "%s/%s" dir package--archive-contents-filename))
-         contents)
-    (when (setq contents (package--read-archive-file contents-file))
-      (dolist (package contents)
-        (package--add-to-archive-contents package archive)))))
+(defun package-installed-p (package &optional min-version)
+  "Return true if PACKAGE, of MIN-VERSION or newer, is installed.
+MIN-VERSION should be a version list."
+  (unless package--initialized (error "package.el is not yet initialized!"))
+    (or
+     (let ((pkg-descs (cdr (assq package package-alist))))
+       (and pkg-descs
+            (version-list-<= min-version
+                             (package-desc-version (car pkg-descs)))))
+     ;; Also check built-in packages.
+     (package-built-in-p package min-version)))
 
-(defun package--read-all-archive-contents ()
-  "Re-read `archive-contents', if it exists.
-If successful, set `package--archive-contents'."
-  (setq package--archive-contents nil)
-  (dolist (archive package-archives)
-    (package--read-archive-contents (car archive))))
-
-(defun package--add-to-archive-contents (package archive)
-  "Add the PACKAGE from the given ARCHIVE if necessary.
-Also, add the originating archive to the `package-desc' structure."
-  (let* ((name (car package))
-         (pkg-desc (package-desc-from-archive-format package archive))
-         (entry (cons name pkg-desc))
-         (existing-package (assq name package--archive-contents)))
-    (cond ((not existing-package)
-           (add-to-list 'package--archive-contents entry))
-          ((version-list-< (package-desc-version (cdr existing-package))
-                           (package-desc-version pkg-desc))
-           ;; Replace the entry with this one.
-           (setq package--archive-contents
-                 (cons entry
-                       (delq existing-package
-                             package--archive-contents)))))))
-
-(defun package-installed-p (name &optional min-version)
-  "Return true if NAME, of MIN-VERSION or newer, is installed.
-NAME must be a symbol and MIN-VERSION must be a version list."
-  (let ((pkg-desc (assq name package--alist)))
-    (if pkg-desc
-        (version-list-<= min-version
-                         (package-desc-version (cdr pkg-desc)))
-      ;; Also check built-in packages.
-      (package--built-in-p name min-version))))
-
-(defun package--compute-transaction (package-list requirements)
-  "Return a list of packages to be installed, including PACKAGE-LIST.
-PACKAGE-LIST should be a list of package names (symbols).
+(defun package-compute-transaction (packages requirements)
+  "Return a list of packages to be installed, including PACKAGES.
+PACKAGES should be a list of `package-desc'.
 
 REQUIREMENTS should be a list of additional requirements; each
 element in this list should have the form (PACKAGE VERSION-LIST),
@@ -1169,45 +756,65 @@ This function recursively computes the requirements of the
 packages in REQUIREMENTS, and returns a list of all the packages
 that must be installed.  Packages that are already installed are
 not included in this list."
+  ;; FIXME: We really should use backtracking to explore the whole
+  ;; search space (e.g. if foo require bar-1.3, and bar-1.4 requires toto-1.1
+  ;; whereas bar-1.3 requires toto-1.0 and the user has put a hold on toto-1.0:
+  ;; the current code might fail to see that it could install foo by using the
+  ;; older bar-1.3).
   (dolist (elt requirements)
     (let* ((next-pkg (car elt))
-           (next-version (cadr elt)))
-      (unless (package-installed-p next-pkg next-version)
+           (next-version (cadr elt))
+           (already ()))
+      (dolist (pkg packages)
+        (if (eq next-pkg (package-desc-name pkg))
+            (setq already pkg)))
+      (cond
+       (already
+        (if (version-list-< next-version (package-desc-version already))
+            ;; Move to front, so it gets installed early enough (bug#14082).
+            (setq packages (cons already (delq already packages)))
+          (error "Need package `%s-%s', but only %s is available"
+                 next-pkg (package-version-join next-version)
+                 (package-version-join (package-desc-version already)))))
+
+       ((package-installed-p next-pkg next-version) nil)
+
+       (t
         ;; A package is required, but not installed.  It might also be
         ;; blocked via `package-load-list'.
-        (let ((pkg-desc (cdr (assq next-pkg package--archive-contents)))
-              hold)
-          (when (setq hold (assq next-pkg package-load-list))
-            (setq hold (cadr hold))
-            (cond ((eq hold t))
-                  ((eq hold nil)
-                   (error "Required package '%s' is disabled"
-                          (symbol-name next-pkg)))
-                  ((null (stringp hold))
-                   (error "Invalid element in `package-load-list'"))
-                  ((version-list-< (version-to-list hold) next-version)
-                   (error "Package `%s' held at version %s, \
+        (let ((pkg-descs (cdr (assq next-pkg package-archive-contents)))
+              (found nil)
+              (problem nil))
+          (while (and pkg-descs (not found))
+            (let* ((pkg-desc (pop pkg-descs))
+                   (version (package-desc-version pkg-desc))
+                   (disabled (package-disabled-p next-pkg version)))
+              (cond
+               ((version-list-< version next-version)
+                (error
+                 "Need package `%s-%s', but only %s is available"
+                 next-pkg (package-version-join next-version)
+                 (package-version-join version)))
+               (disabled
+                (unless problem
+                  (setq problem
+                        (if (stringp disabled)
+                            (format "Package `%s' held at version %s, \
 but version %s required"
-                          (symbol-name next-pkg) hold
-                          (package-version-join next-version)))))
-          (unless pkg-desc
-            (error "Package `%s-%s' is unavailable"
-                   (symbol-name next-pkg)
-                   (package-version-join next-version)))
-          (unless (version-list-<= next-version
-                                   (package-desc-version pkg-desc))
-            (error
-             "Need package `%s-%s', but only %s is available"
-             (symbol-name next-pkg) (package-version-join next-version)
-             (package-version-join (package-desc-version pkg-desc))))
-          ;; Only add to the transaction if we don't already have it.
-          (unless (memq next-pkg package-list)
-            (push next-pkg package-list))
-          (setq package-list
-                (package--compute-transaction package-list
-                                              (package-desc-reqs
-                                               pkg-desc)))))))
-  package-list)
+                                    next-pkg disabled
+                                    (package-version-join next-version))
+                          (format "Required package '%s' is disabled"
+                                  next-pkg)))))
+               (t (setq found pkg-desc)))))
+          (unless found
+            (if problem
+                (error problem)
+              (error "Package `%s-%s' is unavailable"
+                     next-pkg (package-version-join next-version))))
+          (setq packages
+                (package-compute-transaction (cons found packages)
+                                             (package-desc-reqs found))))))))
+  packages)
 
 (defun package-install-desc (desc)
   "Install package described by DESC."
@@ -1234,20 +841,77 @@ satisfied, i.e. that PKG-LIST is computed using
                          (package-version-join (package-desc-version desc)))))
       (package-install-desc desc)
 
-      ;; If package A depends on package B, then A may `require' B
-      ;; during byte compilation.  So we need to activate B before
-      ;; unpacking A.
-      (package--maybe-load-descriptor elt v-string
-                                      package-user-dir)
-      (package--activate elt (version-to-list v-string)))))
+(defun package-read-archive-contents (archive)
+  "Re-read archive contents for ARCHIVE.
+If successful, set the variable `package-archive-contents'.
+If the archive version is too new, signal an error."
+  ;; Version 1 of 'archive-contents' is identical to our internal
+  ;; representation.
+  (let* ((contents-file (format "archives/%s/archive-contents" archive))
+         (contents (package--read-archive-file contents-file)))
+    (when contents
+      (dolist (package contents)
+        (package--add-to-archive-contents package archive)))))
 
-(defvar package-initialized nil)
+;; Package descriptor objects used inside the "archive-contents" file.
+;; Changing this defstruct implies changing the format of the
+;; "archive-contents" files.
+(cl-defstruct (package--ac-desc
+               (:constructor package-make-ac-desc (version reqs summary kind))
+               (:copier nil)
+               (:type vector))
+  version reqs summary kind)
+
+(defun package--add-to-archive-contents (package archive)
+  "Add the PACKAGE from the given ARCHIVE if necessary.
+PACKAGE should have the form (NAME . PACKAGE--AC-DESC).
+Also, add the originating archive to the `package-desc' structure."
+  (let* ((name (car package))
+         (version (package--ac-desc-version (cdr package)))
+         (pkg-desc
+          (package-desc-create
+           :name name
+           :version version
+           :reqs (package--ac-desc-reqs (cdr package))
+           :summary (package--ac-desc-summary (cdr package))
+           :kind (package--ac-desc-kind (cdr package))
+           :archive archive))
+         (existing-packages (assq name package-archive-contents))
+         (pinned-to-archive (assoc name package-pinned-packages)))
+    (cond
+     ;; Skip entirely if pinned to another archive or already installed.
+     ((or (and pinned-to-archive
+               (not (equal (cdr pinned-to-archive) archive)))
+          (let ((bi (assq name package--builtin-versions)))
+            (and bi (version-list-= version (cdr bi))))
+          (let ((ins (cdr (assq name package-alist))))
+            (and ins (version-list-= version
+                                     (package-desc-version (car ins))))))
+      nil)
+     ((not existing-packages)
+      (push (list name pkg-desc) package-archive-contents))
+     (t
+      (while
+          (if (and (cdr existing-packages)
+                   (version-list-<
+                    version (package-desc-version (cadr existing-packages))))
+              (setq existing-packages (cdr existing-packages))
+            (push pkg-desc (cdr existing-packages))
+            nil))))))
+
+(defun package-download-transaction (packages)
+  "Download and install all the packages in PACKAGES.
+PACKAGES should be a list of package-desc.
+This function assumes that all package requirements in
+PACKAGES are satisfied, i.e. that PACKAGES is computed
+using `package-compute-transaction'."
+  (mapc #'package-install-from-archive packages))
 
 ;;;###autoload
-(defun package-install (name)
-  "Install the package named NAME.
-NAME should be the name of one of the available packages in an
-archive in `package-archives'.  Interactively, prompt for NAME."
+(defun package-install (pkg)
+  "Install the package PKG.
+PKG can be a package-desc or the package name of one the available packages
+in an archive in `package-archives'.  Interactively, prompt for its name."
   (interactive
    (progn
      ;; Initialize the package system to get the list of package
@@ -1258,20 +922,106 @@ archive in `package-archives'.  Interactively, prompt for NAME."
        (package-refresh-contents))
      (list (intern (completing-read
                     "Install package: "
-                    (mapcar #'(lambda (elt)
-                                (cons (symbol-name (car elt))
-                                      nil))
-                            package--archive-contents)
+                    (mapcar (lambda (elt) (symbol-name (car elt)))
+                            package-archive-contents)
                     nil t)))))
-  (unless package-initialized
-    (package-initialize t))
-  (let ((pkg-desc (assq name package--archive-contents)))
-    (unless pkg-desc
-      (error "Package `%s' is not available for installation"
-             (symbol-name name)))
-    (package--install-transaction
-     (package--compute-transaction (list name)
-                                   (package-desc-reqs (cdr pkg-desc))))))
+  (package-download-transaction
+   (if (package-desc-p pkg)
+       (package-compute-transaction (list pkg)
+                                    (package-desc-reqs pkg))
+     (package-compute-transaction ()
+                                  (list (list pkg))))))
+
+(defun package-strip-rcs-id (str)
+  "Strip RCS version ID from the version string STR.
+If the result looks like a dotted numeric version, return it.
+Otherwise return nil."
+  (when str
+    (when (string-match "\\`[ \t]*[$]Revision:[ \t]+" str)
+      (setq str (substring str (match-end 0))))
+    (condition-case nil
+        (if (version-to-list str)
+            str)
+      (error nil))))
+
+(defun package-buffer-info ()
+  "Return a `package-desc' describing the package in the current buffer.
+
+If the buffer does not contain a conforming package, signal an
+error.  If there is a package, narrow the buffer to the file's
+boundaries."
+  (goto-char (point-min))
+  (unless (re-search-forward "^;;; \\([^ ]*\\)\\.el ---[ \t]*\\(.*?\\)[ \t]*\\(-\\*-.*-\\*-[ \t]*\\)?$" nil t)
+    (error "Packages lacks a file header"))
+  (let ((file-name (match-string-no-properties 1))
+        (desc      (match-string-no-properties 2))
+        (start     (line-beginning-position)))
+    (unless (search-forward (concat ";;; " file-name ".el ends here"))
+      (error "Package lacks a terminating comment"))
+    ;; Try to include a trailing newline.
+    (forward-line)
+    (narrow-to-region start (point))
+    (require 'lisp-mnt)
+    ;; Use some headers we've invented to drive the process.
+    (let* ((requires-str (lm-header "package-requires"))
+           ;; Prefer Package-Version; if defined, the package author
+           ;; probably wants us to use it.  Otherwise try Version.
+           (pkg-version
+            (or (package-strip-rcs-id (lm-header "package-version"))
+                (package-strip-rcs-id (lm-header "version")))))
+      (unless pkg-version
+        (error
+         "Package lacks a \"Version\" or \"Package-Version\" header"))
+      (package-desc-from-define
+       file-name pkg-version desc
+       (if requires-str (package-read-from-string requires-str))
+       :kind 'single))))
+
+(declare-function tar-get-file-descriptor "tar-mode" (file))
+(declare-function tar--extract "tar-mode" (descriptor))
+
+(defun package-tar-file-info ()
+  "Find package information for a tar file.
+The return result is a `package-desc'."
+  (cl-assert (derived-mode-p 'tar-mode))
+  (let* ((dir-name (file-name-directory
+                    (tar-header-name (car tar-parse-info))))
+         (desc-file (package--description-file dir-name))
+         (tar-desc (tar-get-file-descriptor (concat dir-name desc-file))))
+    (unless tar-desc
+      (error "No package descriptor file found"))
+    (with-current-buffer (tar--extract tar-desc)
+      (goto-char (point-min))
+      (unwind-protect
+          (let* ((pkg-def-parsed (read (current-buffer)))
+                 (pkg-desc
+                  (if (not (eq (car pkg-def-parsed) 'define-package))
+                      (error "Can't find define-package in %s"
+                             (tar-header-name tar-desc))
+                    (apply #'package-desc-from-define
+                           (append (cdr pkg-def-parsed))))))
+            (setf (package-desc-kind pkg-desc) 'tar)
+            pkg-desc)
+        (kill-buffer (current-buffer))))))
+
+
+;;;###autoload
+(defun package-install-from-buffer ()
+  "Install a package from the current buffer.
+The current buffer is assumed to be a single .el or .tar file that follows the
+packaging guidelines; see info node `(elisp)Packaging'.
+Downloads and installs required packages as needed."
+  (interactive)
+  (let ((pkg-desc (if (derived-mode-p 'tar-mode)
+                      (package-tar-file-info)
+                    (package-buffer-info))))
+    ;; Download and install the dependencies.
+    (let* ((requires (package-desc-reqs pkg-desc))
+           (transaction (package-compute-transaction nil requires)))
+      (package-download-transaction transaction))
+    ;; Install the package itself.
+    (package-unpack pkg-desc)
+    pkg-desc))
 
 ;;;###autoload
 (defun package-install-file (file)
@@ -1280,32 +1030,42 @@ The file can either be a tar file or an Emacs Lisp file."
   (interactive "fPackage file name: ")
   (with-temp-buffer
     (insert-file-contents-literally file)
-    (cond
-     ((string-match "\\.el$" file)
-      (package-install-single))
-     ((string-match "\\.tar$" file)
-      (package-install-tar))
-     (t (error "Unrecognized extension `%s'" (file-name-extension file))))
-    (package--activate (intern (package-strip-version file))
-                       (package-version-from-filename
-                        (file-name-sans-extension file)))))
+    (when (string-match "\\.tar\\'" file) (tar-mode))
+    (package-install-from-buffer)))
 
-(defun package-delete (name version)
-  "Delete package NAME at VERSION.
-NAME must be a symbol and VERSION must be a version list."
-  (let ((dir (package--dir name version))
-        (version-str (package-version-join version)))
-    (cond
-     ((not (stringp dir))
-      (message "Package `%s-%s' already deleted." name version-str))
-     ((string-equal (file-name-directory dir)
-                    (file-name-as-directory package-user-dir))
+(defun package-delete (pkg-desc)
+  (let ((dir (package-desc-dir pkg-desc)))
+    (if (not (string-prefix-p (file-name-as-directory
+                               (expand-file-name package-user-dir))
+                              (expand-file-name dir)))
+        ;; Don't delete "system" packages.
+        (error "Package `%s' is a system package, not deleting"
+               (package-desc-full-name pkg-desc))
       (delete-directory dir t t)
-      (message "Package `%s-%s' deleted." name version-str))
-     (t
-      ;; Don't delete "system" packages
-      (error "Package `%s-%s' is a system package, not deleting"
-             name version-str)))))
+      ;; Update package-alist.
+      (let* ((name (package-desc-name pkg-desc)))
+        (delete pkg-desc (assq name package-alist)))
+      (message "Package `%s' deleted." (package-desc-full-name pkg-desc)))))
+
+(defun package-archive-base (desc)
+  "Return the archive containing the package NAME."
+  (cdr (assoc (package-desc-archive desc) package-archives)))
+
+(defun package--download-one-archive (archive file)
+  "Retrieve an archive file FILE from ARCHIVE, and cache it.
+ARCHIVE should be a cons cell of the form (NAME . LOCATION),
+similar to an entry in `package-alist'.  Save the cached copy to
+\"archives/NAME/archive-contents\" in `package-user-dir'."
+  (let* ((dir (expand-file-name (format "archives/%s" (car archive))
+                                package-user-dir)))
+    (package--with-work-buffer (cdr archive) file
+      ;; Read the retrieved buffer to make sure it is valid (e.g. it
+      ;; may fetch a URL redirect page).
+      (when (listp (read buffer))
+        (make-directory dir t)
+        (setq buffer-file-name (expand-file-name file dir))
+        (let ((version-control 'never))
+          (save-buffer))))))
 
 ;;;###autoload
 (defun package-refresh-contents ()
@@ -1313,6 +1073,7 @@ NAME must be a symbol and VERSION must be a version list."
 This informs Emacs about the latest versions of all packages, and
 makes them available for download."
   (interactive)
+  ;; FIXME: Do it asynchronously.
   (unless (file-exists-p package-user-dir)
     (make-directory package-user-dir t))
   (dolist (archive package-archives)
@@ -1329,14 +1090,13 @@ makes them available for download."
 The variable `package-load-list' controls which packages to load.
 If optional arg NO-ACTIVATE is non-nil, don't activate packages."
   (interactive)
-  (setq package--alist nil
-        package--obsolete-alist nil)
-  (package--load-all-descriptors)
-  (package--read-all-archive-contents)
+  (setq package-alist nil)
+  (package-load-all-descriptors)
+  (package-read-all-archive-contents)
   (unless no-activate
-    (dolist (elt package--alist)
-      (package--activate (car elt) (package-desc-version (cdr elt)))))
-  (setq package-initialized t))
+    (dolist (elt package-alist)
+      (package-activate (car elt))))
+  (setq package--initialized t))
 
 
 ;;;; Package description buffer.
@@ -1345,25 +1105,25 @@ If optional arg NO-ACTIVATE is non-nil, don't activate packages."
 (defun describe-package (package)
   "Display the full documentation of PACKAGE (a symbol)."
   (interactive
-   (let* ((guess (function-called-at-point))
-          packages val)
+   (let* ((guess (function-called-at-point)))
      (require 'finder-inf nil t)
      ;; Load the package list if necessary (but don't activate them).
      (unless package-initialized
        (package-initialize t))
-     (setq packages (append (mapcar 'car package--alist)
-                            (mapcar 'car package--archive-contents)
-                            (mapcar 'car package--builtins)))
-     (unless (memq guess packages)
-       (setq guess nil))
-     (setq val
-           (completing-read (format "Describe package%s: "
-                                    (if guess
-                                        (format "(default %s)" guess)
-                                      ""))
-                            (mapcar 'symbol-name packages) nil t nil nil guess))
-     (list (if (equal val "") guess (intern val)))))
-  (if (or (null package) (not (symbolp package)))
+     (let ((packages (append (mapcar 'car package-alist)
+                             (mapcar 'car package-archive-contents)
+                             (mapcar 'car package--builtins))))
+       (unless (memq guess packages)
+         (setq guess nil))
+       (setq packages (mapcar 'symbol-name packages))
+       (let ((val
+              (completing-read (if guess
+                                   (format "Describe package (default %s): "
+                                           guess)
+                                 "Describe package: ")
+                               packages nil t nil nil guess)))
+         (list (intern val))))))
+  (if (not (or (package-desc-p package) (and package (symbolp package))))
       (message "No package specified")
     (help-setup-xref (list #'describe-package package)
                      (called-interactively-p 'interactive))
@@ -1371,59 +1131,52 @@ If optional arg NO-ACTIVATE is non-nil, don't activate packages."
       (with-current-buffer standard-output
         (describe--package-1 package)))))
 
-(defun describe--package-1 (package)
-  "Internal function to display documentation for PACKAGE (a symbol)."
-  (let ((package-name (symbol-name package))
-        (built-in (assq package package--builtins))
-        desc pkg-dir reqs version installable archive)
-    (prin1 package)
+(defun describe-package-1 (pkg)
+  (require 'lisp-mnt)
+  (let* ((desc (or
+                (if (package-desc-p pkg) pkg)
+                (cadr (assq pkg package-alist))
+                (let ((built-in (assq pkg package--builtins)))
+                  (if built-in
+                      (package--from-builtin built-in)
+                    (cadr (assq pkg package-archive-contents))))))
+         (name (if desc (package-desc-name desc) pkg))
+         (pkg-dir (if desc (package-desc-dir desc)))
+         (reqs (if desc (package-desc-reqs desc)))
+         (version (if desc (package-desc-version desc)))
+         (archive (if desc (package-desc-archive desc)))
+         (built-in (eq pkg-dir 'builtin))
+         (installable (and archive (not built-in)))
+         (status (if desc (package-desc-status desc) "orphan")))
+    (prin1 name)
     (princ " is ")
-    (cond
-     ;; Loaded packages are in `package--alist'.
-     ((setq desc (cdr (assq package package--alist)))
-      (setq version (package-desc-version-string desc))
-      (if (setq pkg-dir (package--dir package-name (package-desc-version desc)))
-          (insert "an installed package.\n\n")
-        ;; This normally does not happen.
-        (insert "a deleted package.\n\n")))
-
-     ;; Available packages are in `package--archive-contents'.
-     ((setq desc (cdr (assq package package--archive-contents)))
-      (setq version (package-version-join (package-desc-version desc))
-            archive (package-desc-archive desc)
-            installable t)
-      (if built-in
-          (insert "a built-in package.\n\n")
-        (insert "an uninstalled package.\n\n")))
-
-     (built-in
-      (setq desc (cdr built-in)
-            version (package-version-join (package-desc-version desc)))
-      (insert "a built-in package.\n\n"))
-
-     (t
-      (insert "an orphan package.\n\n")))
+    (princ (if (memq (aref status 0) '(?a ?e ?i ?o ?u)) "an " "a "))
+    (princ status)
+    (princ " package.\n\n")
 
     (insert "     " (propertize "Status" 'font-lock-face 'bold) ": ")
-    (cond (pkg-dir
-           (insert (propertize "Installed"
+    (cond (built-in
+           (insert (propertize (capitalize status)
+                               'font-lock-face 'font-lock-builtin-face)
+                   "."))
+          (pkg-dir
+           (insert (propertize (capitalize status) ;FIXME: Why comment-face?
                                'font-lock-face 'font-lock-comment-face))
            (insert " in `")
            ;; Todo: Add button for uninstalling.
-           (help-insert-xref-button (file-name-as-directory pkg-dir)
+           (help-insert-xref-button (abbreviate-file-name
+                                     (file-name-as-directory pkg-dir))
                                     'help-package-def pkg-dir)
-           (if built-in
+           (if (and (package-built-in-p name)
+                    (not (package-built-in-p name version)))
                (insert "',\n             shadowing a "
                        (propertize "built-in package"
                                    'font-lock-face 'font-lock-builtin-face)
                        ".")
              (insert "'.")))
           (installable
-           (if built-in
-               (insert (propertize "Built-in." 'font-lock-face 'font-lock-builtin-face)
-                       "  Alternate version available")
-             (insert "Available"))
-           (insert " from " archive)
+           (insert (capitalize status))
+           (insert " from " (format "%s" archive))
            (insert " -- ")
            (let ((button-text (if (display-graphic-p) "Install" "[Install]"))
                  (button-face (if (display-graphic-p)
@@ -1432,15 +1185,14 @@ If optional arg NO-ACTIVATE is non-nil, don't activate packages."
                                          :foreground "black")
                                 'link)))
              (insert-text-button button-text 'face button-face 'follow-link t
-                                 'package-symbol package
-                                 'action 'package--install-button-action)))
-          (built-in
-           (insert (propertize "Built-in." 'font-lock-face 'font-lock-builtin-face)))
-          (t (insert "Deleted.")))
+                                 'package-desc desc
+                                 'action 'package-install-button-action)))
+          (t (insert (capitalize status) ".")))
     (insert "\n")
-    (and version (> (length version) 0)
+    (and version
          (insert "    "
-                 (propertize "Version" 'font-lock-face 'bold) ": " version "\n"))
+                 (propertize "Version" 'font-lock-face 'bold) ": "
+                 (package-version-join version) "\n"))
 
     (setq reqs (if desc (package-desc-reqs desc)))
     (when reqs
@@ -1460,14 +1212,73 @@ If optional arg NO-ACTIVATE is non-nil, don't activate packages."
           (help-insert-xref-button text 'help-package name))
         (insert "\n")))
     (insert "    " (propertize "Summary" 'font-lock-face 'bold)
-            ": " (or (if desc (package-desc-summary desc)) "") "\n\n")
+            ": " (if desc (package-desc-summary desc)) "\n")
 
-    (insert (package-desc-get-readme desc))))
+    (let* ((all-pkgs (append (cdr (assq name package-alist))
+                             (cdr (assq name package-archive-contents))
+                             (let ((bi (assq name package--builtins)))
+                               (if bi (list (package--from-builtin bi))))))
+           (other-pkgs (delete desc all-pkgs)))
+      (when other-pkgs
+        (insert "    " (propertize "Other versions" 'font-lock-face 'bold) ": "
+                (mapconcat
+                 (lambda (opkg)
+                   (let* ((ov (package-desc-version opkg))
+                          (dir (package-desc-dir opkg))
+                          (from (or (package-desc-archive opkg)
+                                    (if (stringp dir) "installed" dir))))
+                     (if (not ov) (format "%s" from)
+                       (format "%s (%s)"
+                               (make-text-button (package-version-join ov) nil
+                                                 'face 'link
+                                                 'follow-link t
+                                                 'action
+                                                 (lambda (_button)
+                                                   (describe-package opkg)))
+                               from))))
+                 other-pkgs ", ")
+                ".\n")))
 
-(defun package--install-button-action (button)
-  (let ((package (button-get button 'package-symbol)))
-    (when (y-or-n-p (format "Install package `%s'? " package))
-      (package-install package)
+    (insert "\n")
+
+    (if built-in
+        ;; For built-in packages, insert the commentary.
+        (let ((fn (locate-file (format "%s.el" name) load-path
+                               load-file-rep-suffixes))
+              (opoint (point)))
+          (insert (or (lm-commentary fn) ""))
+          (save-excursion
+            (goto-char opoint)
+            (when (re-search-forward "^;;; Commentary:\n" nil t)
+              (replace-match ""))
+            (while (re-search-forward "^\\(;+ ?\\)" nil t)
+              (replace-match ""))))
+      (let ((readme (expand-file-name (format "%s-readme.txt" name)
+                                      package-user-dir))
+            readme-string)
+        ;; For elpa packages, try downloading the commentary.  If that
+        ;; fails, try an existing readme file in `package-user-dir'.
+        (cond ((condition-case nil
+                   (package--with-work-buffer
+                       (package-archive-base desc)
+                       (format "%s-readme.txt" name)
+                     (setq buffer-file-name
+                           (expand-file-name readme package-user-dir))
+                     (let ((version-control 'never))
+                       (save-buffer))
+                     (setq readme-string (buffer-string))
+                     t)
+                 (error nil))
+               (insert readme-string))
+              ((file-readable-p readme)
+               (insert-file-contents readme)
+               (goto-char (point-max))))))))
+
+(defun package-install-button-action (button)
+  (let ((pkg-desc (button-get button 'package-desc)))
+    (when (y-or-n-p (format "Install package `%s'? "
+                            (package-desc-full-name pkg-desc)))
+      (package-install pkg-desc)
       (revert-buffer nil t)
       (goto-char (point-min)))))
 
@@ -1554,100 +1365,121 @@ Letters do not insert themselves; instead, they are commands.
                                ("Description" 0 nil)])
   (setq tabulated-list-padding 2)
   (setq tabulated-list-sort-key (cons "Status" nil))
+  (add-hook 'tabulated-list-revert-hook 'package-menu--refresh)
   (tabulated-list-init-header))
 
-(defmacro package--push (pkg status listname)
+(defmacro package--push (pkg-desc status listname)
   "Convenience macro for `package-menu--generate'.
-If the alist stored in the symbol LISTNAME lacks an entry for
-`package-desc' PKG, add one.  The alist is keyed with cons
-cells (NAME . VERSION-LIST), where NAME is a symbol and
-VERSION-LIST is a version list. The values of LISTNAME are lists
-of STATUS and the package summary.
+If the alist stored in the symbol LISTNAME lacks an entry for a
+package PKG-DESC, add one.  The alist is keyed with PKG-DESC."
+  `(unless (assoc ,pkg-desc ,listname)
+     ;; FIXME: Should we move status into pkg-desc?
+     (push (cons ,pkg-desc ,status) ,listname)))
 
-LISTNAME looks like this:
+(defvar package-list-unversioned nil
+  "If non-nil include packages that don't have a version in `list-package'.")
 
-\( ((foo . (1 2 3))
-    (status summary)) ... )"
-  `(cl-pushnew (list (cons (package-desc-name ,pkg)
-                           (package-desc-version ,pkg))
-                     ,status
-                     (package-desc-summary ,pkg))
-               ,listname
-               :key 'car
-               :test 'equal))
+(defun package-desc-status (pkg-desc)
+  (let* ((name (package-desc-name pkg-desc))
+         (dir (package-desc-dir pkg-desc))
+         (lle (assq name package-load-list))
+         (held (cadr lle))
+         (version (package-desc-version pkg-desc)))
+    (cond
+     ((eq dir 'builtin) "built-in")
+     ((and lle (null held)) "disabled")
+     ((stringp held)
+      (let ((hv (if (stringp held) (version-to-list held))))
+        (cond
+         ((version-list-= version hv) "held")
+         ((version-list-< version hv) "obsolete")
+         (t "disabled"))))
+     ((package-built-in-p name version) "obsolete")
+     (dir                               ;One of the installed packages.
+      (cond
+       ((not (file-exists-p (package-desc-dir pkg-desc))) "deleted")
+       ((eq pkg-desc (cadr (assq name package-alist))) "installed")
+       (t "obsolete")))
+     (t
+      (let* ((ins (cadr (assq name package-alist)))
+             (ins-v (if ins (package-desc-version ins))))
+        (cond
+         ((or (null ins) (version-list-< ins-v version))
+          (if (memq name package-menu--new-package-list)
+              "new" "available"))
+         ((version-list-< version ins-v) "obsolete")
+         ((version-list-= version ins-v) "installed")))))))
 
-(defun package-menu--generate (remember-pos packages)
-  "Populate the Package Menu.
-If REMEMBER-POS is non-nil, keep point on the same entry.
-PACKAGES should be t, which means to display all known packages,
-or a list of package names (symbols) to display."
-  ;; Construct list of ((NAME . VERSION-LIST) STATUS DESCRIPTION)
-  (let (info-list name builtin)
+(defun package-menu--refresh (&optional packages)
+  "Re-populate the `tabulated-list-entries'.
+PACKAGES should be nil or t, which means to display all known packages."
+  ;; Construct list of (PKG-DESC . STATUS).
+  (unless packages (setq packages t))
+  (let (info-list name)
     ;; Installed packages:
     (dolist (elt package--alist)
       (setq name (car elt))
       (when (or (eq packages t) (memq name packages))
-        (package--push (cdr elt)
-                       (if (stringp (cadr (assq name package-load-list)))
-                           "held" "installed")
-                       info-list)))
+        (dolist (pkg (cdr elt))
+          (package--push pkg (package-desc-status pkg) info-list))))
 
     ;; Built-in packages:
     (dolist (elt package--builtins)
       (setq name (car elt))
       (when (and (not (eq name 'emacs)) ; Hide the `emacs' package.
+                 (or package-list-unversioned
+                     (package--bi-desc-version (cdr elt)))
                  (or (eq packages t) (memq name packages)))
-        (package--push (cdr elt) "built-in" info-list)))
+        (package--push (package--from-builtin elt) "built-in" info-list)))
 
     ;; Available and disabled packages:
     (dolist (elt package--archive-contents)
       (setq name (car elt))
       (when (or (eq packages t) (memq name packages))
-        (let ((hold (assq name package-load-list)))
-          (package--push (cdr elt)
-                         (cond
-                          ((and hold (null (cadr hold))) "disabled")
-                          ((memq name package-menu--new-package-list) "new")
-                          (t "available"))
-                         info-list))))
-
-    ;; Obsolete packages:
-    (dolist (elt package--obsolete-alist)
-      (dolist (inner-elt (cdr elt))
-        (when (or (eq packages t) (memq (car elt) packages))
-          (package--push (cdr inner-elt) "obsolete" info-list))))
+        (dolist (pkg (cdr elt))
+          ;; Hide obsolete packages.
+          (unless (package-installed-p (package-desc-name pkg)
+                                       (package-desc-version pkg))
+            (package--push pkg (package-desc-status pkg) info-list)))))
 
     ;; Print the result.
-    (setq tabulated-list-entries (mapcar 'package-menu--print-info info-list))
-    (tabulated-list-print remember-pos)))
+    (setq tabulated-list-entries
+          (mapcar #'package-menu--print-info info-list))))
+
+(defun package-menu--generate (remember-pos packages)
+  "Populate the Package Menu.
+ If REMEMBER-POS is non-nil, keep point on the same entry.
+PACKAGES should be t, which means to display all known packages,
+or a list of package names (symbols) to display."
+  (package-menu--refresh packages)
+  (tabulated-list-print remember-pos))
 
 (defun package-menu--print-info (entry)
   "Return a package entry suitable for `tabulated-list-entries'.
-ENTRY has the form ((NAME . VERSION-LIST) STATUS SUMMARY).
-Return (KEY [NAME VERSION-STRING STATUS SUMMARY]), where KEY is the
-identifier (NAME . VERSION-LIST)."
-  (let* ((name (caar entry))
-         (version (cdar entry))
-         (status  (nth 1 entry))
-         (summary (or (nth 2 entry) ""))
-         (face (cond
-                ((string= status "built-in")  'font-lock-builtin-face)
-                ((string= status "available") 'default)
-                ((string= status "new") 'bold)
-                ((string= status "held")      'font-lock-constant-face)
-                ((string= status "disabled")  'font-lock-warning-face)
-                ((string= status "installed") 'font-lock-comment-face)
-                (t 'font-lock-warning-face)))) ; obsolete.
-    (list (cons name version)
-          (vector (list (symbol-name name)
+PKG has the form (PKG-DESC . STATUS).
+Return (PKG-DESC [NAME VERSION STATUS DOC])."
+  (let* ((pkg-desc (car pkg))
+         (status  (cdr pkg))
+         (face (pcase status
+                (`"built-in"  'font-lock-builtin-face)
+                (`"available" 'default)
+                (`"new"       'bold)
+                (`"held"      'font-lock-constant-face)
+                (`"disabled"  'font-lock-warning-face)
+                (`"installed" 'font-lock-comment-face)
+                (_            'font-lock-warning-face)))) ; obsolete.
+    (list pkg-desc
+          (vector (list (symbol-name (package-desc-name pkg-desc))
                         'face 'link
                         'follow-link t
-                        'package-symbol name
+                        'package-desc pkg-desc
                         'action 'package-menu-describe-package)
-                  (propertize (package-version-join version)
+                  (propertize (package-version-join
+                               (package-desc-version pkg-desc))
                               'font-lock-face face)
                   (propertize status 'font-lock-face face)
-                  (propertize summary 'font-lock-face face)))))
+                  (propertize (package-desc-summary pkg-desc)
+                              'font-lock-face face)))))
 
 (defun package-menu-refresh ()
   "Download the Emacs Lisp package archive.
@@ -1663,10 +1495,11 @@ This fetches the contents of each archive specified in
   "Describe the current package.
 If optional arg BUTTON is non-nil, describe its associated package."
   (interactive)
-  (let ((package (if button (button-get button 'package-symbol)
-                   (car (tabulated-list-get-id)))))
-    (if package
-        (describe-package package))))
+  (let ((pkg-desc (if button (button-get button 'package-desc)
+                    (tabulated-list-get-id))))
+    (if pkg-desc
+        (describe-package pkg-desc)
+      (error "No package here"))))
 
 ;; fixme numeric argument
 (defun package-menu-mark-delete (&optional _num)
@@ -1713,8 +1546,8 @@ If optional arg BUTTON is non-nil, describe its associated package."
   'package-menu-view-commentary 'package-menu-describe-package "24.1")
 
 (defun package-menu-get-status ()
-  (let* ((pkg (tabulated-list-get-id))
-         (entry (and pkg (assq pkg tabulated-list-entries))))
+  (let* ((id (tabulated-list-get-id))
+         (entry (and id (assq id tabulated-list-entries))))
     (if entry
         (aref (cadr entry) 2)
       "")))
@@ -1723,18 +1556,20 @@ If optional arg BUTTON is non-nil, describe its associated package."
   (let (installed available upgrades)
     ;; Build list of installed/available packages in this buffer.
     (dolist (entry tabulated-list-entries)
-      ;; ENTRY is ((NAME . VERSION-LIST) [NAME VERSION-STRING STATUS SUMMARY])
-      (let ((pkg (car entry))
+      ;; ENTRY is (PKG-DESC [NAME VERSION STATUS DOC])
+      (let ((pkg-desc (car entry))
             (status (aref (cadr entry) 2)))
         (cond ((equal status "installed")
-               (push pkg installed))
+               (push pkg-desc installed))
               ((member status '("available" "new"))
-               (push pkg available)))))
-    ;; Loop through list of installed packages, finding upgrades
-    (dolist (pkg installed)
-      (let ((avail-pkg (assq (car pkg) available)))
+               (push (cons (package-desc-name pkg-desc) pkg-desc)
+                     available)))))
+    ;; Loop through list of installed packages, finding upgrades.
+    (dolist (pkg-desc installed)
+      (let ((avail-pkg (assq (package-desc-name pkg-desc) available)))
         (and avail-pkg
-             (version-list-< (cdr pkg) (cdr avail-pkg))
+             (version-list-< (package-desc-version pkg-desc)
+                             (package-desc-version (cdr avail-pkg)))
              (push avail-pkg upgrades))))
     upgrades))
 
@@ -1754,11 +1589,11 @@ call will upgrade the package."
       (save-excursion
         (goto-char (point-min))
         (while (not (eobp))
-          (let* ((pkg (tabulated-list-get-id))
-                 (upgrade (assq (car pkg) upgrades)))
+          (let* ((pkg-desc (tabulated-list-get-id))
+                 (upgrade (cdr (assq (package-desc-name pkg-desc) upgrades))))
             (cond ((null upgrade)
                    (forward-line 1))
-                  ((equal pkg upgrade)
+                  ((equal pkg-desc upgrade)
                    (package-menu-mark-install))
                   (t
                    (package-menu-mark-delete))))))
@@ -1774,49 +1609,46 @@ Optional argument NOQUERY non-nil means do not ask the user to confirm."
   (interactive)
   (unless (derived-mode-p 'package-menu-mode)
     (error "The current buffer is not in Package Menu mode"))
-  (let (install-list delete-list cmd id)
+  (let (install-list delete-list cmd pkg-desc)
     (save-excursion
       (goto-char (point-min))
       (while (not (eobp))
         (setq cmd (char-after))
         (unless (eq cmd ?\s)
-          ;; This is the key (PACKAGE . VERSION-LIST).
-          (setq id (tabulated-list-get-id))
+          ;; This is the key PKG-DESC.
+          (setq pkg-desc (tabulated-list-get-id))
           (cond ((eq cmd ?D)
-                 (push id delete-list))
+                 (push pkg-desc delete-list))
                 ((eq cmd ?I)
-                 (push (car id) install-list))))
+                 (push pkg-desc install-list))))
         (forward-line)))
     (when install-list
       (if (or
            noquery
            (yes-or-no-p
             (if (= (length install-list) 1)
-                (format "Install package `%s'? " (car install-list))
+                (format "Install package `%s'? "
+                        (package-desc-full-name (car install-list)))
               (format "Install these %d packages (%s)? "
                       (length install-list)
-                      (mapconcat 'symbol-name install-list ", ")))))
+                      (mapconcat #'package-desc-full-name
+                                 install-list ", ")))))
           (mapc 'package-install install-list)))
     ;; Delete packages, prompting if necessary.
     (when delete-list
       (if (or
            noquery
            (yes-or-no-p
-            (if (= (length delete-list) 1)
-                (format "Delete package `%s-%s'? "
-                        (caar delete-list)
-                        (package-version-join (cdar delete-list)))
-              (format "Delete these %d packages (%s)? "
-                      (length delete-list)
-                      (mapconcat #'(lambda (elt)
-                                     (format "%s-%s"
-                                             (car elt)
-                                             (package-version-join (cdr elt))))
-                                 delete-list
-                                 ", ")))))
+           (if (= (length delete-list) 1)
+               (format "Delete package `%s'? "
+                       (package-desc-full-name (car delete-list)))
+             (format "Delete these %d packages (%s)? "
+                     (length delete-list)
+                     (mapconcat #'package-desc-full-name
+                                delete-list ", ")))))
           (dolist (elt delete-list)
             (condition-case-unless-debug err
-                (package-delete (car elt) (cdr elt))
+                (package-delete elt)
               (error (message (cadr err)))))
         (error "Aborted")))
     (if (or delete-list install-list)
@@ -1859,8 +1691,8 @@ Optional argument NOQUERY non-nil means do not ask the user to confirm."
       (string< dA dB))))
 
 (defun package-menu--name-predicate (A B)
-  (string< (symbol-name (caar A))
-           (symbol-name (caar B))))
+  (string< (symbol-name (package-desc-name (car A)))
+           (symbol-name (package-desc-name (car B)))))
 
 ;;;###autoload
 (defun package-list-packages (&optional no-fetch)

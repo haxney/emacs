@@ -53,7 +53,8 @@
 ;;; Code:
 
 (require 'macroexp)
-(eval-when-compile (require 'cl-lib))
+(require 'cl-lib)
+(eval-when-compile (require 'pcase))
 
 ;;; Options
 
@@ -262,26 +263,6 @@ An extant spec symbol is a symbol that is not a function and has a
 
 ;;; Utilities
 
-;; Define edebug-gensym - from old cl.el
-(defvar edebug-gensym-index 0
-  "Integer used by `edebug-gensym' to produce new names.")
-
-(defun edebug-gensym (&optional prefix)
-  "Generate a fresh uninterned symbol.
-There is an optional argument, PREFIX.  PREFIX is the string
-that begins the new name.  Most people take just the default,
-except when debugging needs suggest otherwise."
-  (if (null prefix)
-      (setq prefix "G"))
-  (let ((newsymbol nil)
-        (newname   ""))
-    (while (not newsymbol)
-      (setq newname (concat prefix (int-to-string edebug-gensym-index)))
-      (setq edebug-gensym-index (+ edebug-gensym-index 1))
-      (if (not (intern-soft newname))
-          (setq newsymbol (make-symbol newname))))
-    newsymbol))
-
 (defun edebug-lambda-list-keywordp (object)
   "Return t if OBJECT is a lambda list keyword.
 A lambda list keyword is a symbol that starts with `&'."
@@ -471,6 +452,8 @@ the option `edebug-all-forms'."
 (or (fboundp 'edebug-original-eval-defun)
     (defalias 'edebug-original-eval-defun (symbol-function 'eval-defun)))
 
+(defvar edebug-result) ; The result of the function call returned by body.
+
 ;; We should somehow arrange to be able to do this
 ;; without actually replacing the eval-defun command.
 (defun edebug-eval-defun (edebug-it)
@@ -486,7 +469,7 @@ With a prefix argument, instrument the code for Edebug.
 
 Setting option `edebug-all-defs' to a non-nil value reverses the meaning
 of the prefix argument.  Code is then instrumented when this function is
-invoked without a prefix argument
+invoked without a prefix argument.
 
 If acting on a `defun' for FUNCTION, and the function was instrumented,
 `Edebug: FUNCTION' is printed in the minibuffer.  If not instrumented,
@@ -1183,7 +1166,7 @@ Maybe clear the markers and delete the symbol's edebug property?"
   ;; Uses the dynamically bound vars edebug-def-name and edebug-def-args.
   ;; Do this after parsing since that may find a name.
   (setq edebug-def-name
-	(or edebug-def-name edebug-old-def-name (edebug-gensym "edebug-anon")))
+	(or edebug-def-name edebug-old-def-name (cl-gensym "edebug-anon")))
   `(edebug-enter
     (quote ,edebug-def-name)
     ,(if edebug-inside-func
@@ -1296,7 +1279,7 @@ expressions; a `progn' form will be returned enclosing these forms."
 
       ;; Set the name here if it was not set by edebug-make-enter-wrapper.
       (setq edebug-def-name
-	    (or edebug-def-name edebug-old-def-name (edebug-gensym "edebug-anon")))
+	    (or edebug-def-name edebug-old-def-name (cl-gensym "edebug-anon")))
 
       ;; Add this def as a dependent of containing def.  Buggy.
       '(if (and edebug-containing-def-name
@@ -2072,11 +2055,6 @@ expressions; a `progn' form will be returned enclosing these forms."
 
 (defvar edebug-active nil)  ;; Non-nil when edebug is active
 
-;;; add minor-mode-alist entry
-(or (assq 'edebug-active minor-mode-alist)
-    (setq minor-mode-alist (cons (list 'edebug-active " *Debugging*")
-				 minor-mode-alist)))
-
 (defvar edebug-stack nil)
 ;; Stack of active functions evaluated via edebug.
 ;; Should be nil at the top level.
@@ -2110,7 +2088,6 @@ expressions; a `progn' form will be returned enclosing these forms."
 (defvar edebug-coverage) ; the coverage results of each expression of function.
 
 (defvar edebug-buffer) ; which buffer the function is in.
-(defvar edebug-result) ; the result of the function call returned by body
 (defvar edebug-outside-executing-macro)
 (defvar edebug-outside-defining-kbd-macro)
 
@@ -2715,8 +2692,7 @@ MSG is printed after `::::} '."
   ;; Start up a recursive edit inside of edebug.
   ;; The current buffer is the edebug-buffer, which is put into edebug-mode.
   ;; Assume that none of the variables below are buffer-local.
-  (let ((edebug-buffer-read-only buffer-read-only)
-	;; match-data must be done in the outside buffer
+  (let (;; match-data must be done in the outside buffer
 	(edebug-outside-match-data
 	 (with-current-buffer edebug-outside-buffer ; in case match buffer different
 	   (match-data)))
@@ -2729,8 +2705,6 @@ MSG is printed after `::::} '."
 	;; The window configuration may be saved and restored
 	;; during a recursive-edit
 	edebug-inside-windows
-
-	(edebug-outside-map (current-local-map))
 
         ;; Save the outside value of executing macro.  (here??)
         (edebug-outside-executing-macro executing-kbd-macro)
@@ -2804,10 +2778,9 @@ MSG is printed after `::::} '."
 		   (not (memq arg-mode '(after error))))
 	      (message "Break"))
 
-	  (setq buffer-read-only t)
 	  (setq signal-hook-function nil)
 
-	  (edebug-mode)
+	  (edebug-mode 1)
 	  (unwind-protect
 	      (recursive-edit)		;  <<<<<<<<<< Recursive edit
 
@@ -2828,10 +2801,7 @@ MSG is printed after `::::} '."
 		  (set-buffer edebug-buffer)
 		  (if (memq edebug-execution-mode '(go Go-nonstop))
 		      (edebug-overlay-arrow))
-		  (setq buffer-read-only edebug-buffer-read-only)
-		  (use-local-map edebug-outside-map)
-		  (remove-hook 'kill-buffer-hook 'edebug-kill-buffer t)
-		  )
+                  (edebug-mode -1))
 	      ;; gotta have a buffer to let its buffer local variables be set
 	      (get-buffer-create " bogus edebug buffer"))
 	    ));; inner let
@@ -3773,7 +3743,9 @@ be installed in `emacs-lisp-mode-map'.")
   (interactive)
   (describe-function 'edebug-mode))
 
-(defun edebug-mode ()
+(defvar edebug--mode-saved-vars nil)
+
+(define-minor-mode edebug-mode
   "Mode for Emacs Lisp buffers while in Edebug.
 
 In addition to all Emacs Lisp commands (except those that modify the
@@ -3807,17 +3779,32 @@ Options:
 `edebug-on-signal'
 `edebug-unwrap-results'
 `edebug-global-break-condition'"
+  :lighter " *Debugging*"
+  :keymap edebug-mode-map
   ;; If the user kills the buffer in which edebug is currently active,
   ;; exit to top level, because the edebug command loop can't usefully
   ;; continue running in such a case.
-  (add-hook 'kill-buffer-hook 'edebug-kill-buffer nil t)
-  (use-local-map edebug-mode-map))
+  ;;
+  (if (not edebug-mode)
+      (progn
+        (while edebug--mode-saved-vars
+          (let ((setting (pop edebug--mode-saved-vars)))
+            (if (consp setting)
+                (set (car setting) (cdr setting))
+              (kill-local-variable setting))))
+        (remove-hook 'kill-buffer-hook 'edebug-kill-buffer t))
+    (pcase-dolist (`(,var . ,val) '((buffer-read-only . t)))
+      (push
+       (if (local-variable-p var) (cons var (symbol-value var)) var)
+       edebug--mode-saved-vars)
+      (set (make-local-variable var) val))
+    ;; Append `edebug-kill-buffer' to the hook to avoid interfering with
+    ;; other entries that are unguarded against deleted buffer.
+    (add-hook 'kill-buffer-hook 'edebug-kill-buffer t t)))
 
 (defun edebug-kill-buffer ()
   "Used on `kill-buffer-hook' when Edebug is operating in a buffer of Lisp code."
-  (let (kill-buffer-hook)
-    (kill-buffer (current-buffer)))
-  (top-level))
+  (run-with-timer 0 nil #'top-level))
 
 ;;; edebug eval list mode
 
@@ -4140,7 +4127,7 @@ reinstrument it."
 It is removed when you hit any char."
   ;; This seems not to work with Emacs 18.59. It undoes too far.
   (interactive)
-  (let ((buffer-read-only nil))
+  (let ((inhibit-read-only t))
     (undo-boundary)
     (edebug-display-freq-count)
     (setq unread-command-events
