@@ -1,3 +1,8 @@
+2013-07-20  Daniel Hackney  <dan@haxney.org>
+
+	* package-test.el: Remove tar-package-building functions. Tar file
+	used for testing will be included in the repository.
+
 2013-07-13  Fabián Ezequiel Gallina  <fgallina@gnu.org>
 
 	* automated/python-tests.el (python-imenu-create-index-2)
